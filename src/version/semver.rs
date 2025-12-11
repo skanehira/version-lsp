@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use semver::Version;
 use tracing::warn;
 
