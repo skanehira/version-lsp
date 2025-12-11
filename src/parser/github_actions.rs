@@ -20,11 +20,6 @@ impl Default for GitHubActionsParser {
 }
 
 impl Parser for GitHubActionsParser {
-    fn can_parse(&self, uri: &str) -> bool {
-        // Match .github/workflows/*.yml or .github/workflows/*.yaml
-        uri.contains(".github/workflows/") && (uri.ends_with(".yml") || uri.ends_with(".yaml"))
-    }
-
     fn parse(&self, content: &str) -> Result<Vec<PackageInfo>, ParseError> {
         let mut parser = tree_sitter::Parser::new();
         let language = tree_sitter_yaml::LANGUAGE;
@@ -215,20 +210,6 @@ impl GitHubActionsParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case(".github/workflows/ci.yml", true)]
-    #[case(".github/workflows/release.yaml", true)]
-    #[case("/home/user/project/.github/workflows/test.yml", true)]
-    #[case("file:///home/user/.github/workflows/build.yml", true)]
-    #[case(".github/actions/my-action/action.yml", false)]
-    #[case("workflow.yml", false)]
-    #[case("package.json", false)]
-    fn can_parse_returns_expected(#[case] uri: &str, #[case] expected: bool) {
-        let parser = GitHubActionsParser::new();
-        assert_eq!(parser.can_parse(uri), expected);
-    }
 
     #[test]
     fn parse_extracts_action_with_version_tag() {
