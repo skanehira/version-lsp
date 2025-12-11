@@ -4,6 +4,7 @@ use std::path::Path;
 use rusqlite::Connection;
 use tracing::{debug, info};
 
+use crate::version::checker::VersionResolver;
 use crate::version::error::CacheError;
 
 pub struct Cache {
@@ -187,6 +188,7 @@ impl Cache {
             SELECT v.version FROM versions v
             JOIN packages p ON v.package_id = p.id
             WHERE p.registry_type = ?1 AND p.package_name = ?2
+            ORDER BY v.id ASC
             LIMIT 1
             "#,
             (registry_type, package_name),
@@ -217,6 +219,25 @@ impl Cache {
             .collect::<Result<Vec<(String, String)>, _>>()?;
 
         Ok(packages)
+    }
+}
+
+impl VersionResolver for Cache {
+    fn get_latest_version(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+    ) -> Result<Option<String>, CacheError> {
+        Cache::get_latest_version(self, registry_type, package_name)
+    }
+
+    fn version_exists(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+        version: &str,
+    ) -> Result<bool, CacheError> {
+        Cache::version_exists(self, registry_type, package_name, version)
     }
 }
 
