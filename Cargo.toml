@@ -10,7 +10,7 @@ tower-lsp = "0.20"
 async-trait = "0.1"
 
 # Parser
-tree-sitter = "0.24"
+tree-sitter = "0.26"
 tree-sitter-yaml = "0.7"
 
 # HTTP client
