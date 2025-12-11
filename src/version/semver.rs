@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use semver::Version;
+use tracing::warn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionStatus {
@@ -11,14 +12,18 @@ pub enum VersionStatus {
 }
 
 pub fn compare_versions(current: &str, latest: &str) -> VersionStatus {
-    let current_ver = match Version::parse(current) {
-        Ok(v) => v,
-        Err(_) => return VersionStatus::Invalid,
+    let Some(current_ver) = Version::parse(current)
+        .inspect_err(|e| warn!("Invalid current version '{}': {}", current, e))
+        .ok()
+    else {
+        return VersionStatus::Invalid;
     };
 
-    let latest_ver = match Version::parse(latest) {
-        Ok(v) => v,
-        Err(_) => return VersionStatus::Invalid,
+    let Some(latest_ver) = Version::parse(latest)
+        .inspect_err(|e| warn!("Invalid latest version '{}': {}", latest, e))
+        .ok()
+    else {
+        return VersionStatus::Invalid;
     };
 
     match current_ver.cmp(&latest_ver) {
