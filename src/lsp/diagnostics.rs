@@ -1,0 +1,244 @@
+//! Diagnostics generation for version checking results
+
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
+
+use crate::parser::traits::Parser;
+use crate::parser::types::PackageInfo;
+use crate::version::checker::{
+    VersionCompareResult, VersionResolver, VersionStatus, compare_version,
+};
+
+const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
+
+/// Generate diagnostics for a document by parsing and checking versions
+pub fn generate_diagnostics(
+    parser: &dyn Parser,
+    resolver: &impl VersionResolver,
+    content: &str,
+) -> Vec<Diagnostic> {
+    let packages = parser.parse(content).unwrap_or_default();
+
+    packages
+        .iter()
+        .filter_map(|package| {
+            let result = compare_version(
+                resolver,
+                package.registry_type.as_str(),
+                &package.name,
+                &package.version,
+            )
+            .ok()?;
+            create_diagnostic(package, &result)
+        })
+        .collect()
+}
+
+/// Create a diagnostic from package info and version check result
+/// Returns None if no diagnostic should be shown (e.g., NotInCache)
+fn create_diagnostic(package: &PackageInfo, result: &VersionCompareResult) -> Option<Diagnostic> {
+    let (severity, message) = match result.status {
+        VersionStatus::NotInCache | VersionStatus::Latest => return None,
+        VersionStatus::Outdated => (
+            DiagnosticSeverity::WARNING,
+            format!(
+                "Update available: {} -> {}",
+                result.current_version,
+                result.latest_version.as_deref().unwrap_or("unknown")
+            ),
+        ),
+        VersionStatus::Newer => (
+            DiagnosticSeverity::ERROR,
+            format!(
+                "Version {} does not exist (latest: {})",
+                result.current_version,
+                result.latest_version.as_deref().unwrap_or("unknown")
+            ),
+        ),
+        VersionStatus::NotFound => (
+            DiagnosticSeverity::ERROR,
+            format!("Version {} not found in registry", result.current_version),
+        ),
+        VersionStatus::Invalid => (
+            DiagnosticSeverity::ERROR,
+            format!("Invalid version format: {}", result.current_version),
+        ),
+    };
+
+    let range = Range {
+        start: Position {
+            line: package.line as u32,
+            character: package.column as u32,
+        },
+        end: Position {
+            line: package.line as u32,
+            character: (package.column + package.end_offset - package.start_offset) as u32,
+        },
+    };
+
+    Some(Diagnostic {
+        range,
+        severity: Some(severity),
+        message,
+        source: Some(PACKAGE_NAME.to_string()),
+        ..Default::default()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::traits::MockParser;
+    use crate::parser::types::RegistryType;
+    use crate::version::checker::MockVersionResolver;
+    use rstest::rstest;
+
+    fn make_package_info(name: &str, version: &str, line: usize, column: usize) -> PackageInfo {
+        PackageInfo {
+            name: name.to_string(),
+            version: version.to_string(),
+            commit_hash: None,
+            registry_type: RegistryType::GitHubActions,
+            start_offset: column,
+            end_offset: column + version.len(),
+            line,
+            column,
+        }
+    }
+
+    #[rstest]
+    #[case(
+        "3.0.0",
+        true,
+        DiagnosticSeverity::WARNING,
+        "Update available: 3.0.0 -> 4.0.0"
+    )]
+    #[case(
+        "5.0.0",
+        true,
+        DiagnosticSeverity::ERROR,
+        "Version 5.0.0 does not exist (latest: 4.0.0)"
+    )]
+    #[case(
+        "9.9.9",
+        false,
+        DiagnosticSeverity::ERROR,
+        "Version 9.9.9 not found in registry"
+    )]
+    #[case(
+        "invalid",
+        true,
+        DiagnosticSeverity::ERROR,
+        "Invalid version format: invalid"
+    )]
+    fn generate_diagnostics_returns_expected_diagnostic(
+        #[case] current_version: &str,
+        #[case] version_exists: bool,
+        #[case] expected_severity: DiagnosticSeverity,
+        #[case] expected_message: &str,
+    ) {
+        let version = current_version.to_string();
+        let mut parser = MockParser::new();
+        parser.expect_parse().returning(move |_| {
+            Ok(vec![make_package_info(
+                "actions/checkout",
+                &version.clone(),
+                5,
+                14,
+            )])
+        });
+
+        let exists = version_exists;
+        let mut resolver = MockVersionResolver::new();
+        resolver
+            .expect_get_latest_version()
+            .returning(|_, _| Ok(Some("4.0.0".to_string())));
+        resolver
+            .expect_version_exists()
+            .returning(move |_, _, _| Ok(exists));
+
+        let diagnostics = generate_diagnostics(&parser, &resolver, "content");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Some(expected_severity));
+        assert_eq!(diagnostics[0].message, expected_message);
+    }
+
+    #[test]
+    fn generate_diagnostics_returns_empty_for_latest_package() {
+        let mut parser = MockParser::new();
+        parser
+            .expect_parse()
+            .returning(|_| Ok(vec![make_package_info("actions/checkout", "4.0.0", 5, 14)]));
+
+        let mut resolver = MockVersionResolver::new();
+        resolver
+            .expect_get_latest_version()
+            .returning(|_, _| Ok(Some("4.0.0".to_string())));
+        resolver
+            .expect_version_exists()
+            .returning(|_, _, _| Ok(true));
+
+        let diagnostics = generate_diagnostics(&parser, &resolver, "content");
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn generate_diagnostics_skips_packages_not_in_cache() {
+        let mut parser = MockParser::new();
+        parser
+            .expect_parse()
+            .returning(|_| Ok(vec![make_package_info("actions/checkout", "4.0.0", 5, 14)]));
+
+        let mut resolver = MockVersionResolver::new();
+        resolver
+            .expect_get_latest_version()
+            .returning(|_, _| Ok(None));
+
+        let diagnostics = generate_diagnostics(&parser, &resolver, "content");
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn generate_diagnostics_calculates_correct_range() {
+        let mut parser = MockParser::new();
+        parser.expect_parse().returning(|_| {
+            Ok(vec![PackageInfo {
+                name: "actions/checkout".to_string(),
+                version: "3.0.0".to_string(),
+                commit_hash: None,
+                registry_type: RegistryType::GitHubActions,
+                start_offset: 10,
+                end_offset: 20,
+                line: 5,
+                column: 10,
+            }])
+        });
+
+        let mut resolver = MockVersionResolver::new();
+        resolver
+            .expect_get_latest_version()
+            .returning(|_, _| Ok(Some("4.0.0".to_string())));
+        resolver
+            .expect_version_exists()
+            .returning(|_, _, _| Ok(true));
+
+        let diagnostics = generate_diagnostics(&parser, &resolver, "content");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].range,
+            Range {
+                start: Position {
+                    line: 5,
+                    character: 10
+                },
+                end: Position {
+                    line: 5,
+                    character: 20
+                },
+            }
+        );
+    }
+}
