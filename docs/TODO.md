@@ -140,29 +140,32 @@
 
 #### 3.1 Parserトレイトの定義
 
-- [ ] [STRUCTURAL] Parserトレイトの定義 (`src/parser/traits.rs`)
+- [x] [STRUCTURAL] Parserトレイトの定義 (`src/parser/traits.rs`)
   - `Parser`トレイト定義
   - `can_parse(&self, uri: &str) -> bool`
   - `parse(&self, content: &str) -> Result<Vec<PackageInfo>>`
 
-- [ ] [STRUCTURAL] 共通型の定義 (`src/parser/types.rs`)
+- [x] [STRUCTURAL] 共通型の定義 (`src/parser/types.rs`)
   - `PackageInfo`構造体
   - `RegistryType`列挙型
 
 #### 3.2 GitHub Actionsパーサーの実装
 
-- [ ] [RED] GitHub Actionsパーサーのテスト作成 (`src/parser/github_actions.rs`内の`#[cfg(test)]`)
+- [x] [RED] GitHub Actionsパーサーのテスト作成 (`src/parser/github_actions.rs`内の`#[cfg(test)]`)
   - workflowファイルから`uses:`を抽出できることを確認
   - `actions/checkout@v3`のようなアクション参照をパースできることを確認
   - バージョンタグとハッシュの両方に対応
+  - steps外のuses（jobレベル、workflow_call）を無視
+  - ハッシュ+コメントバージョン（`@hash # v1.2.3`）をサポート
 
-- [ ] [GREEN] GitHub Actionsパーサーの実装 (`src/parser/github_actions.rs`)
+- [x] [GREEN] GitHub Actionsパーサーの実装 (`src/parser/github_actions.rs`)
   - tree-sitter-yamlを使用
-  - `uses:`フィールドの抽出
+  - `uses:`フィールドの抽出（steps内のみ）
   - `owner/repo@version`形式のパース
+  - コミットハッシュ検出とコメントからのバージョン抽出
   - 参照実装（`/Users/skanehira/dev/github.com/skanehira/github-actions.nvim/lua/github-actions/versions/parser.lua`）を参考
 
-- [ ] [REFACTOR] エラーハンドリングとログ
+- [x] [REFACTOR] エラーハンドリングとログ
   - tree-sitterパーサー未インストール時のエラーメッセージ
   - 不正な形式のワークフローファイルの処理
 
