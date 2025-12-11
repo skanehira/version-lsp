@@ -156,3 +156,81 @@ impl Cache {
         Ok(versions)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn replace_versions_creates_new_package() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let mut cache = Cache::new(&db_path, 86400).unwrap();
+
+        let versions = vec![
+            "1.0.0".to_string(),
+            "1.1.0".to_string(),
+            "2.0.0".to_string(),
+        ];
+        cache
+            .replace_versions("npm", "axios", versions.clone())
+            .unwrap();
+
+        let saved = cache.get_versions("npm", "axios").unwrap();
+        assert_eq!(saved, versions);
+    }
+
+    #[test]
+    fn replace_versions_updates_existing_package() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let mut cache = Cache::new(&db_path, 86400).unwrap();
+
+        let initial_versions = vec!["1.0.0".to_string()];
+        cache
+            .replace_versions("npm", "axios", initial_versions)
+            .unwrap();
+
+        let new_versions = vec!["1.0.0".to_string(), "1.1.0".to_string()];
+        cache
+            .replace_versions("npm", "axios", new_versions.clone())
+            .unwrap();
+
+        let saved = cache.get_versions("npm", "axios").unwrap();
+        assert_eq!(saved, new_versions);
+    }
+
+    #[test]
+    fn get_versions_returns_empty_for_nonexistent_package() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400).unwrap();
+
+        let versions = cache.get_versions("npm", "nonexistent").unwrap();
+        assert!(versions.is_empty());
+    }
+
+    #[test]
+    fn get_versions_performance_with_1000_versions() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let mut cache = Cache::new(&db_path, 86400).unwrap();
+
+        let versions: Vec<String> = (0..1000).map(|i| format!("{}.0.0", i)).collect();
+        cache
+            .replace_versions("npm", "large-package", versions.clone())
+            .unwrap();
+
+        let start = std::time::Instant::now();
+        let retrieved = cache.get_versions("npm", "large-package").unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(retrieved.len(), 1000);
+        assert!(
+            elapsed.as_millis() < 10,
+            "get_versions took {}ms, expected < 10ms",
+            elapsed.as_millis()
+        );
+    }
+}
