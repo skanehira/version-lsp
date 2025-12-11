@@ -75,24 +75,24 @@
 
 #### 1.3 バージョン取得機能
 
-- [ ] [RED] バージョン取得のテスト作成
+- [x] [RED] バージョン取得のテスト作成
   - `get_versions()`で保存済みバージョンを取得できることを確認
   - 存在しないパッケージの場合は空配列を返すことを確認
 
-- [ ] [GREEN] バージョン取得の実装
+- [x] [GREEN] バージョン取得の実装
   - `get_versions(registry_type, package_name) -> Result<Vec<String>>`
   - JOINクエリでpackagesとversionsを結合
 
-- [ ] [REFACTOR] クエリのパフォーマンステスト
+- [x] [REFACTOR] クエリのパフォーマンステスト
   - 1000件のバージョンでも10ms以内で取得できることを確認
 
 #### 1.4 バージョン存在チェック
 
-- [ ] [RED] バージョン存在チェックのテスト作成
+- [x] [RED] バージョン存在チェックのテスト作成
   - `version_exists()`で存在するバージョンに対してtrueを返すことを確認
   - 存在しないバージョンに対してfalseを返すことを確認
 
-- [ ] [GREEN] バージョン存在チェックの実装
+- [x] [GREEN] バージョン存在チェックの実装
   - `version_exists(registry_type, package_name, version) -> Result<bool>`
   - EXISTSクエリでの効率的なチェック
 

@@ -155,11 +155,33 @@ impl Cache {
 
         Ok(versions)
     }
+
+    pub fn version_exists(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+        version: &str,
+    ) -> Result<bool, CacheError> {
+        let exists: bool = self.conn.query_row(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM versions v
+                JOIN packages p ON v.package_id = p.id
+                WHERE p.registry_type = ?1 AND p.package_name = ?2 AND v.version = ?3
+            )
+            "#,
+            (registry_type, package_name, version),
+            |row| row.get(0),
+        )?;
+
+        Ok(exists)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use tempfile::TempDir;
 
     #[test]
@@ -231,6 +253,33 @@ mod tests {
             elapsed.as_millis() < 10,
             "get_versions took {}ms, expected < 10ms",
             elapsed.as_millis()
+        );
+    }
+
+    #[rstest]
+    #[case("npm", "axios", "1.0.0", true)]
+    #[case("npm", "axios", "2.0.0", true)]
+    #[case("npm", "axios", "9.9.9", false)]
+    #[case("npm", "nonexistent", "1.0.0", false)]
+    #[case("crates", "axios", "1.0.0", false)]
+    fn version_exists_returns_expected(
+        #[case] registry_type: &str,
+        #[case] package_name: &str,
+        #[case] version: &str,
+        #[case] expected: bool,
+    ) {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let mut cache = Cache::new(&db_path, 86400).unwrap();
+
+        let versions = vec!["1.0.0".to_string(), "2.0.0".to_string()];
+        cache.replace_versions("npm", "axios", versions).unwrap();
+
+        assert_eq!(
+            cache
+                .version_exists(registry_type, package_name, version)
+                .unwrap(),
+            expected
         );
     }
 }
