@@ -34,6 +34,11 @@ assert_eq!(capabilities.open_close, Some(true));
 - Convert multiple similar test cases into a single parameterized test
 - Use `#[rstest]` with `#[case(...)]` attributes for test parameters
 
+### When to Check for Parameterization
+
+- After writing 2+ tests for the same function
+- During REFACTOR phase of TDD
+
 ### When to Convert to Parameterized Tests
 
 **Convert when:**
