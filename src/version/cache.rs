@@ -1,42 +1,44 @@
+#![allow(dead_code)]
 use std::path::Path;
 
-use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+use rusqlite::Connection;
 use tracing::{debug, info};
 
 use crate::version::error::CacheError;
 
 pub struct Cache {
-    pool: SqlitePool,
+    conn: Connection,
     #[allow(dead_code)]
     refresh_interval: i64,
 }
 
 impl Cache {
-    pub async fn new(db_path: &Path, refresh_interval: i64) -> Result<Self, CacheError> {
+    pub fn new(db_path: &Path, refresh_interval: i64) -> Result<Self, CacheError> {
         info!("Initializing cache database at {:?}", db_path);
 
-        let options = SqliteConnectOptions::new()
-            .filename(db_path)
-            .create_if_missing(true);
+        let conn = Connection::open(db_path)?;
 
-        let pool = SqlitePool::connect_with(options).await?;
+        // Enable WAL mode for better concurrency
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+
         debug!("Database connection established");
 
         let cache = Self {
-            pool,
+            conn,
             refresh_interval,
         };
 
-        cache.create_schema().await?;
+        cache.create_schema()?;
         info!("Cache initialized successfully");
 
         Ok(cache)
     }
 
-    async fn create_schema(&self) -> Result<(), CacheError> {
+    fn create_schema(&self) -> Result<(), CacheError> {
         debug!("Creating database schema");
 
-        sqlx::query(
+        self.conn.execute(
             r#"
             CREATE TABLE IF NOT EXISTS packages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,30 +48,15 @@ impl Cache {
                 UNIQUE(registry_type, package_name)
             )
             "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| CacheError::SchemaCreation(e.to_string()))?;
+            [],
+        )?;
 
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_updated_at ON packages(updated_at)
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| CacheError::SchemaCreation(e.to_string()))?;
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_updated_at ON packages(updated_at)",
+            [],
+        )?;
 
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_registry_package ON packages(registry_type, package_name)
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| CacheError::SchemaCreation(e.to_string()))?;
-
-        sqlx::query(
+        self.conn.execute(
             r#"
             CREATE TABLE IF NOT EXISTS versions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,36 +66,93 @@ impl Cache {
                 UNIQUE(package_id, version)
             )
             "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| CacheError::SchemaCreation(e.to_string()))?;
+            [],
+        )?;
 
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_package_id ON versions(package_id)
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| CacheError::SchemaCreation(e.to_string()))?;
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_package_id ON versions(package_id)",
+            [],
+        )?;
 
         debug!("Database schema created successfully");
         Ok(())
     }
 
-    pub async fn table_exists(&self, table_name: &str) -> Result<bool, CacheError> {
-        let result: (i32,) = sqlx::query_as(
-            r#"
-            SELECT COUNT(*) FROM sqlite_master
-            WHERE type='table' AND name=?
-            "#,
-        )
-        .bind(table_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| CacheError::Query(e.to_string()))?;
+    pub fn replace_versions(
+        &mut self,
+        registry_type: &str,
+        package_name: &str,
+        versions: Vec<String>,
+    ) -> Result<(), CacheError> {
+        debug!(
+            "Saving {} versions for {}/{}",
+            versions.len(),
+            registry_type,
+            package_name
+        );
 
-        Ok(result.0 > 0)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let tx = self.conn.transaction()?;
+
+        // Insert or update package
+        tx.execute(
+            r#"
+            INSERT INTO packages (registry_type, package_name, updated_at)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(registry_type, package_name) DO UPDATE SET updated_at = excluded.updated_at
+            "#,
+            (registry_type, package_name, now),
+        )?;
+
+        // Get package_id
+        let package_id: i64 = tx.query_row(
+            "SELECT id FROM packages WHERE registry_type = ?1 AND package_name = ?2",
+            (registry_type, package_name),
+            |row| row.get(0),
+        )?;
+
+        // Delete existing versions
+        tx.execute("DELETE FROM versions WHERE package_id = ?1", [package_id])?;
+
+        // Insert new versions
+        {
+            let mut stmt =
+                tx.prepare("INSERT INTO versions (package_id, version) VALUES (?1, ?2)")?;
+            for version in &versions {
+                stmt.execute((package_id, version))?;
+            }
+        }
+
+        tx.commit()?;
+
+        debug!(
+            "Successfully saved versions for {}/{}",
+            registry_type, package_name
+        );
+        Ok(())
+    }
+
+    pub fn get_versions(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+    ) -> Result<Vec<String>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT v.version FROM versions v
+            JOIN packages p ON v.package_id = p.id
+            WHERE p.registry_type = ?1 AND p.package_name = ?2
+            "#,
+        )?;
+
+        let versions = stmt
+            .query_map((registry_type, package_name), |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+
+        Ok(versions)
     }
 }
