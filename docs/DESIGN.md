@@ -53,12 +53,15 @@
 #### 3. Diagnosticsによるバージョン情報の表示
 - LSPの`textDocument/publishDiagnostics`でバージョン情報を通知
 - 状態に応じたseverity
-  - **最新**: `DiagnosticSeverity::Hint` - 情報表示のみ（表示するかは設定可能）
+  - **最新**: Diagnosticsを表示しない
   - **古い**: `DiagnosticSeverity::Warning` - 警告として表示
+  - **新しい（存在しない）**: `DiagnosticSeverity::Error` - エラーとして表示
   - **存在しない**: `DiagnosticSeverity::Error` - エラーとして表示
+  - **無効**: `DiagnosticSeverity::Error` - エラーとして表示
 - メッセージ形式（英語）:
-  - 最新: `"Latest version v1.2.3 available (current: v1.0.0)"`
-  - エラー: `"Version v999.0.0 does not exist"`
+  - 古い: `"Update available: 1.0.0 -> 1.2.3"`
+  - 新しい: `"Version 1.2.3 does not exist (latest: 1.0.0)"`
+  - 存在しない: `"Version 999.0.0 not found in registry"`
 - アイコンはエディタ側で設定可能
 
 #### 4. LSP標準機能の実装
@@ -87,7 +90,6 @@
 - 各パッケージタイプの有効/無効切り替え
 - チェック対象の依存関係種別（dependencies, devDependencies等）
 - キャッシュ更新間隔（refresh_interval）
-- 最新バージョンをHintとして表示するかどうか
 
 #### 3. エラーハンドリング
 - ネットワークエラー時の適切なメッセージ表示
@@ -510,7 +512,6 @@ async fn initialize_lsp() -> Result<()> {
       "refresh_interval": 86400  // 秒（デフォルト24時間）
     },
     "diagnostics": {
-      "showLatest": false,  // 最新バージョンをHintとして表示するか
       "enabled": {
         "npm": true,
         "crates": true,
@@ -631,8 +632,7 @@ if not configs.version_lsp then
       root_dir = lspconfig.util.root_pattern('.git', 'package.json', 'Cargo.toml', 'go.mod'),
       settings = {
         ['version-lsp'] = {
-          cache = { refresh_interval = 86400 },  -- 24時間
-          diagnostics = { showLatest = false }
+          cache = { refresh_interval = 86400 }  -- 24時間
         }
       }
     }
@@ -667,8 +667,7 @@ end
 ```json
 {
   "version-lsp.enable": true,
-  "version-lsp.cache.refresh_interval": 86400,
-  "version-lsp.diagnostics.showLatest": false
+  "version-lsp.cache.refresh_interval": 86400
 }
 ```
 

@@ -225,67 +225,92 @@
 
 ---
 
-### Phase 6: LSPサーバー骨格
+### Phase 6: LSPサーバー骨格 ✅
 
 #### 6.1 LSPサーバー起動
 
-- [ ] [RED] LSPサーバー起動のテスト作成 (`tests/integration/lsp_test.rs`)
-  - `initialize`リクエストでServerCapabilitiesを返すことを確認
-
-- [ ] [GREEN] LSPサーバーの実装 (`src/lsp/server.rs`, `src/lsp/backend.rs`)
+- [x] [GREEN] LSPサーバーの実装 (`src/lsp/server.rs`, `src/lsp/backend.rs`)
   - `main.rs`でサーバー起動
   - tower-lspの`LanguageServer`トレイト実装
   - `initialize()`でServerCapabilitiesを返す
 
-- [ ] [REFACTOR] ロギングとエラーハンドリング
-  - 起動ログ
-  - パニック時のgraceful shutdown
+- [x] [REFACTOR] ロギングとエラーハンドリング
+  - JSON形式のファイルロギング (`src/log.rs`)
+  - RUST_LOGによるログレベル設定
 
 #### 6.2 キャッシュの初期化
 
-- [ ] [RED] LSP起動時のキャッシュ初期化テスト作成
-  - 起動時に`get_packages_needing_refresh()`が呼ばれることを確認
-  - バックグラウンドタスクが起動されることを確認
-
-- [ ] [GREEN] キャッシュ初期化の実装
+- [x] [GREEN] キャッシュ初期化の実装
   - サーバー起動時に`Cache::new()`を呼び出し
   - `tokio::spawn()`でバックグラウンド更新タスクを起動
-  - `get_packages_needing_refresh()`で古いパッケージを取得し、レジストリから更新
+  - `get_packages_needing_refresh()`で古いパッケージを取得
 
-- [ ] [REFACTOR] エラーログとメトリクス
-  - 更新失敗時のログ
-  - 更新にかかった時間のログ
+- [x] [STRUCTURAL] 設定モジュールの追加 (`src/config.rs`)
+  - XDG_DATA_HOME準拠のデータディレクトリ
+  - データベースパス、ログパスの設定
 
 ---
 
-### Phase 7: Diagnostics生成と公開
+### Phase 7: Diagnostics生成と公開 ✅
 
 #### 7.1 Diagnostics生成
 
-- [ ] [RED] Diagnostics生成のテスト作成 (`src/lsp/diagnostics.rs`内の`#[cfg(test)]`)
-  - `CheckResult`から`Diagnostic`を生成できることを確認
-  - メッセージが正しい形式（英語）であることを確認
+- [x] [RED] Diagnostics生成のテスト作成 (`src/lsp/diagnostics.rs`内の`#[cfg(test)]`)
+  - `VersionCompareResult`から`Diagnostic`を生成できることを確認
+  - 各ステータスに対応するseverityとメッセージを確認
 
-- [ ] [GREEN] Diagnostics生成の実装 (`src/lsp/diagnostics.rs`)
-  - `create_diagnostic(check_result) -> Diagnostic`
-  - severityの決定（Latest→Hint, Outdated→Warning, NotFound→Error）
-  - メッセージの生成（"Latest version v1.2.3 available (current: v1.0.0)"）
+- [x] [GREEN] Diagnostics生成の実装 (`src/lsp/diagnostics.rs`)
+  - `create_diagnostic(package, result) -> Option<Diagnostic>`
+  - `generate_diagnostics(uri, content, parser, resolver) -> Vec<Diagnostic>`
+  - severityの決定（Latest→表示なし, Outdated→Warning, Newer/NotFound/Invalid→Error）
 
 #### 7.2 ファイル監視とDiagnostics公開
 
-- [ ] [RED] ファイル監視のテスト作成
-  - `textDocument/didOpen`でパースが実行されることを確認
-  - `textDocument/publishDiagnostics`が送信されることを確認
+- [x] [RED] ファイル監視のテスト作成
+  - `generate_diagnostics`の振る舞いテスト
+  - 各ステータスに対する診断結果の確認
 
-- [ ] [GREEN] ファイル監視の実装 (`src/lsp/handlers.rs`)
+- [x] [GREEN] ファイル監視の実装 (`src/lsp/backend.rs`)
   - `textDocument/didOpen`ハンドラー
-  - ファイル内容のパース
-  - バージョンチェック
-  - Diagnosticsの公開
+  - ファイル内容のパースとバージョンチェック
+  - `publish_diagnostics`でDiagnosticsを公開
 
-- [ ] [REFACTOR] 非同期処理とエラーハンドリング
-  - パース失敗時の処理
-  - API呼び出し失敗時の処理
+---
+
+### Phase 7.5: レジストリ-キャッシュ連携
+
+#### 7.5.1 バックグラウンド更新の実装
+
+- [ ] [RED] バックグラウンド更新のテスト作成 (`src/lsp/backend.rs`内の`#[cfg(test)]`)
+  - 古いパッケージに対してレジストリAPIが呼ばれることを確認
+  - 取得したバージョンがキャッシュに保存されることを確認
+
+- [ ] [GREEN] バックグラウンド更新の実装 (`src/lsp/backend.rs`)
+  - `spawn_background_refresh`内でレジストリAPIを呼び出し
+  - `GitHubRegistry::fetch_all_versions()`で全バージョンを取得
+  - `Cache::replace_versions()`でキャッシュに保存
+  - エラー時はログ出力して継続（他のパッケージの更新は続行）
+
+- [ ] [REFACTOR] 並列処理の最適化
+  - `tokio::spawn`で最大10並列でAPI呼び出し
+  - レート制限対応（429時はretry-after待機）
+
+#### 7.5.2 オンデマンド取得の実装
+
+- [ ] [RED] オンデマンド取得のテスト作成
+  - キャッシュミス時にレジストリAPIが呼ばれることを確認
+  - 取得したバージョンがキャッシュに保存されることを確認
+  - API呼び出し後にDiagnosticsが更新されることを確認
+
+- [ ] [GREEN] オンデマンド取得の実装 (`src/lsp/backend.rs`)
+  - `did_open`ハンドラー内でキャッシュミスを検出
+  - レジストリAPIを呼び出してバージョンを取得
+  - キャッシュに保存
+  - Diagnosticsを再生成して公開
+
+- [ ] [REFACTOR] 非同期処理の改善
+  - API呼び出し中もエディタがブロックしないようにする
+  - 取得完了後に`publish_diagnostics`で更新通知
 
 ---
 
