@@ -171,34 +171,36 @@
 
 ---
 
-### Phase 4: GitHub Releases API
+### Phase 4: GitHub Releases API ✅
 
 #### 4.1 Registryトレイトの定義
 
-- [ ] [STRUCTURAL] Registryトレイトの定義 (`src/version/registry.rs`)
+- [x] [STRUCTURAL] Registryトレイトの定義 (`src/version/registry.rs`)
   - `Registry`トレイト定義
   - `fetch_all_versions(&self, package_name: &str) -> Result<PackageVersions>`
   - `registry_type(&self) -> RegistryType`
 
-- [ ] [STRUCTURAL] 共通型の定義 (`src/version/types.rs`)
+- [x] [STRUCTURAL] 共通型の定義 (`src/version/types.rs`)
   - `PackageVersions`構造体
+  - `RegistryError`エラー型 (`src/version/error.rs`)
 
 #### 4.2 GitHub Releases APIの実装
 
-- [ ] [RED] GitHub Releases APIのテスト作成 (`src/version/registries/github.rs`内の`#[cfg(test)]`)
+- [x] [RED] GitHub Releases APIのテスト作成 (`src/version/registries/github.rs`内の`#[cfg(test)]`)
   - モックAPIサーバー（mockito）でテスト
   - `fetch_all_versions()`で全リリースを取得できることを確認
-  - タグ名からバージョンを抽出（`v1.2.3` → `1.2.3`）
+  - 空リリース、404、429のテストケース
 
-- [ ] [GREEN] GitHub Releases APIの実装 (`src/version/registries/github.rs`)
+- [x] [GREEN] GitHub Releases APIの実装 (`src/version/registries/github.rs`)
   - reqwestでGitHub API (`https://api.github.com/repos/{owner}/{repo}/releases`)を呼び出し
   - タグ名のリストを取得
-  - 新しい順にソート
+  - APIレスポンスからバージョン抽出
 
-- [ ] [REFACTOR] エラーハンドリング
-  - ネットワークエラー
-  - レート制限（429 Too Many Requests）
-  - 存在しないリポジトリ（404 Not Found）
+- [x] [REFACTOR] エラーハンドリング
+  - ネットワークエラー (`RegistryError::Network`)
+  - レート制限 (`RegistryError::RateLimited` with retry-after)
+  - 存在しないリポジトリ (`RegistryError::NotFound`)
+  - 不正なレスポンス (`RegistryError::InvalidResponse`)
 
 ---
 
