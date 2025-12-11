@@ -1,9 +1,13 @@
 //! Version comparison for packages
 
+#[cfg(test)]
+use mockall::automock;
+
 use crate::version::error::CacheError;
 use crate::version::semver::{CompareResult, compare_versions};
 
 /// Trait for resolving version information from cache
+#[cfg_attr(test, automock)]
 pub trait VersionResolver {
     /// Get the latest version for a package
     fn get_latest_version(

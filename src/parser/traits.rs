@@ -1,12 +1,13 @@
 //! Parser trait definition
 
+#[cfg(test)]
+use mockall::automock;
+
 use crate::parser::types::PackageInfo;
 
 /// Trait for parsing package files
-pub trait Parser {
-    /// Check if this parser can handle the given URI
-    fn can_parse(&self, uri: &str) -> bool;
-
+#[cfg_attr(test, automock)]
+pub trait Parser: Send + Sync {
     /// Parse the content and extract package information
     fn parse(&self, content: &str) -> Result<Vec<PackageInfo>, ParseError>;
 }
