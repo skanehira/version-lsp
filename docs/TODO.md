@@ -98,21 +98,21 @@
 
 #### 1.5 最新バージョン取得
 
-- [ ] [RED] 最新バージョン取得のテスト作成
+- [x] [RED] 最新バージョン取得のテスト作成
   - `get_latest_version()`で最新バージョンを取得できることを確認
   - versionsリストの最初の要素を返すことを確認
 
-- [ ] [GREEN] 最新バージョン取得の実装
+- [x] [GREEN] 最新バージョン取得の実装
   - `get_latest_version(registry_type, package_name) -> Result<Option<String>>`
   - LIMIT 1クエリでの取得
 
 #### 1.6 古いパッケージの取得
 
-- [ ] [RED] 古いパッケージ取得のテスト作成
+- [x] [RED] 古いパッケージ取得のテスト作成
   - `get_stale_packages()`で更新間隔を過ぎたパッケージを取得できることを確認
   - 現在時刻と`refresh_interval`を使った判定
 
-- [ ] [GREEN] 古いパッケージ取得の実装
+- [x] [GREEN] 古いパッケージ取得の実装
   - `get_stale_packages() -> Result<Vec<(String, String)>>`
   - `WHERE updated_at < (現在時刻 - refresh_interval)`
 

@@ -176,6 +176,48 @@ impl Cache {
 
         Ok(exists)
     }
+
+    pub fn get_latest_version(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+    ) -> Result<Option<String>, CacheError> {
+        let result = self.conn.query_row(
+            r#"
+            SELECT v.version FROM versions v
+            JOIN packages p ON v.package_id = p.id
+            WHERE p.registry_type = ?1 AND p.package_name = ?2
+            LIMIT 1
+            "#,
+            (registry_type, package_name),
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(version) => Ok(Some(version)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn get_stale_packages(&self) -> Result<Vec<(String, String)>, CacheError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let threshold = now - self.refresh_interval;
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT registry_type, package_name FROM packages WHERE updated_at < ?1")?;
+
+        let packages = stmt
+            .query_map([threshold], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<(String, String)>, _>>()?;
+
+        Ok(packages)
+    }
 }
 
 #[cfg(test)]
@@ -281,5 +323,70 @@ mod tests {
                 .unwrap(),
             expected
         );
+    }
+
+    #[test]
+    fn get_latest_version_returns_first_version() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let mut cache = Cache::new(&db_path, 86400).unwrap();
+
+        let versions = vec![
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            "3.0.0".to_string(),
+        ];
+        cache.replace_versions("npm", "axios", versions).unwrap();
+
+        let latest = cache.get_latest_version("npm", "axios").unwrap();
+        assert_eq!(latest, Some("1.0.0".to_string()));
+    }
+
+    #[test]
+    fn get_latest_version_returns_none_for_nonexistent_package() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400).unwrap();
+
+        let latest = cache.get_latest_version("npm", "nonexistent").unwrap();
+        assert_eq!(latest, None);
+    }
+
+    #[test]
+    fn get_stale_packages_returns_packages_older_than_refresh_interval() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        // refresh_interval = 100ms
+        let mut cache = Cache::new(&db_path, 100).unwrap();
+
+        cache
+            .replace_versions("npm", "axios", vec!["1.0.0".to_string()])
+            .unwrap();
+        cache
+            .replace_versions("npm", "lodash", vec!["4.0.0".to_string()])
+            .unwrap();
+
+        // Wait for packages to become stale
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        let stale = cache.get_stale_packages().unwrap();
+        assert_eq!(stale.len(), 2);
+        assert!(stale.contains(&("npm".to_string(), "axios".to_string())));
+        assert!(stale.contains(&("npm".to_string(), "lodash".to_string())));
+    }
+
+    #[test]
+    fn get_stale_packages_excludes_fresh_packages() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        // refresh_interval = 1 hour (in ms)
+        let mut cache = Cache::new(&db_path, 3600000).unwrap();
+
+        cache
+            .replace_versions("npm", "axios", vec!["1.0.0".to_string()])
+            .unwrap();
+
+        let stale = cache.get_stale_packages().unwrap();
+        assert!(stale.is_empty());
     }
 }
