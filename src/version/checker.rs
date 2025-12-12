@@ -4,7 +4,7 @@
 use mockall::automock;
 
 use crate::version::error::CacheError;
-use crate::version::semver::{CompareResult, compare_versions};
+use crate::version::semver::{CompareResult, compare_versions, version_matches_any};
 
 use crate::version::cache::PackageId;
 
@@ -17,6 +17,13 @@ pub trait VersionStorer: Send + Sync + 'static {
         registry_type: &str,
         package_name: &str,
     ) -> Result<Option<String>, CacheError>;
+
+    /// Get all versions for a package
+    fn get_versions(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+    ) -> Result<Vec<String>, CacheError>;
 
     /// Check if a specific version exists for a package
     fn version_exists(
@@ -85,8 +92,9 @@ pub fn compare_version<S: VersionStorer>(
         });
     };
 
-    // Check if current version exists in registry
-    let version_exists = storer.version_exists(registry_type, package_name, current_version)?;
+    // Check if current version exists in registry using partial version matching
+    let all_versions = storer.get_versions(registry_type, package_name)?;
+    let version_exists = version_matches_any(current_version, &all_versions);
 
     // Compare versions
     let status = match compare_versions(current_version, &latest) {
@@ -131,6 +139,14 @@ mod tests {
             _package_name: &str,
         ) -> Result<Option<String>, CacheError> {
             Ok(self.latest_version.clone())
+        }
+
+        fn get_versions(
+            &self,
+            _registry_type: &str,
+            _package_name: &str,
+        ) -> Result<Vec<String>, CacheError> {
+            Ok(self.existing_versions.clone())
         }
 
         fn version_exists(
@@ -193,5 +209,30 @@ mod tests {
                 status: VersionStatus::NotInCache,
             }
         );
+    }
+
+    #[rstest]
+    // Major only: v6 matches v6.0.0, v6.1.0, etc.
+    #[case("v6", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Latest)]
+    #[case("6", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Latest)]
+    #[case("v5", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Outdated)]
+    // Major.minor: v6.1 matches v6.1.0, v6.1.5, etc.
+    #[case("v6.1", "v6.2.0", vec!["v6.2.0", "v6.1.0"], VersionStatus::Outdated)]
+    #[case("v6.2", "v6.2.0", vec!["v6.2.0", "v6.1.0"], VersionStatus::Latest)]
+    // Full version: exact match required
+    #[case("v6.0.0", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Latest)]
+    #[case("v5.0.0", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Outdated)]
+    fn compare_version_handles_partial_version_matching(
+        #[case] current: &str,
+        #[case] latest: &str,
+        #[case] existing: Vec<&str>,
+        #[case] expected: VersionStatus,
+    ) {
+        let storer = MockStorer::new(Some(latest), existing);
+
+        let result =
+            compare_version(&storer, "github_actions", "actions/checkout", current).unwrap();
+
+        assert_eq!(result.status, expected);
     }
 }

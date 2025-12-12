@@ -148,13 +148,20 @@ mod tests {
         });
 
         let exists = version_exists;
+        let version_for_closure = current_version.to_string();
         let mut storer = MockVersionStorer::new();
         storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
-        storer
-            .expect_version_exists()
-            .returning(move |_, _, _| Ok(exists));
+        storer.expect_get_versions().returning(move |_, _| {
+            if exists {
+                // Return versions that include the current version for existence check
+                Ok(vec![version_for_closure.clone(), "4.0.0".to_string()])
+            } else {
+                // Return versions without the current version
+                Ok(vec!["4.0.0".to_string()])
+            }
+        });
 
         let diagnostics = generate_diagnostics(&parser, &storer, "content");
 
@@ -174,7 +181,9 @@ mod tests {
         storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
-        storer.expect_version_exists().returning(|_, _, _| Ok(true));
+        storer
+            .expect_get_versions()
+            .returning(|_, _| Ok(vec!["4.0.0".to_string()]));
 
         let diagnostics = generate_diagnostics(&parser, &storer, "content");
 
@@ -218,7 +227,9 @@ mod tests {
         storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
-        storer.expect_version_exists().returning(|_, _, _| Ok(true));
+        storer
+            .expect_get_versions()
+            .returning(|_, _| Ok(vec!["3.0.0".to_string(), "4.0.0".to_string()]));
 
         let diagnostics = generate_diagnostics(&parser, &storer, "content");
 

@@ -134,6 +134,14 @@ impl VersionStorer for Cache {
         }
     }
 
+    fn get_versions(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+    ) -> Result<Vec<String>, CacheError> {
+        Cache::get_versions(self, registry_type, package_name)
+    }
+
     fn version_exists(
         &self,
         registry_type: &str,
