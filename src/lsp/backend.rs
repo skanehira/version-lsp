@@ -98,7 +98,7 @@ impl<S: VersionStorer> Backend<S> {
             text_document_sync: Some(TextDocumentSyncCapability::Options(
                 TextDocumentSyncOptions {
                     open_close: Some(true),
-                    change: Some(TextDocumentSyncKind::INCREMENTAL),
+                    change: Some(TextDocumentSyncKind::FULL),
                     ..Default::default()
                 },
             )),
@@ -144,6 +144,79 @@ impl<S: VersionStorer> Backend<S> {
             }
         });
     }
+
+    async fn check_and_publish_diagnostics(&self, uri: Url, content: String) {
+        let uri_str = uri.as_str();
+
+        let Some(parser_type) = detect_parser_type(uri_str) else {
+            return;
+        };
+
+        let Some(parser) = self.parsers.get(&parser_type) else {
+            return;
+        };
+
+        let Some(storer) = &self.storer else {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    "Storer not available, skipping diagnostics",
+                )
+                .await;
+            return;
+        };
+
+        // Parse document to get packages (needed for on-demand fetch)
+        let packages = parser.parse(&content).unwrap_or_default();
+
+        let diagnostics = generate_diagnostics(&**parser, &**storer, &content);
+
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!(
+                    "Publishing {} diagnostics for {}",
+                    diagnostics.len(),
+                    uri_str
+                ),
+            )
+            .await;
+
+        self.client
+            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .await;
+
+        // Spawn background task to fetch missing packages
+        if !packages.is_empty() {
+            let Some(registry) = self.registries.get(&parser_type).cloned() else {
+                return;
+            };
+
+            let storer = storer.clone();
+            let client = self.client.clone();
+            let parser = parser.clone();
+
+            tokio::spawn(async move {
+                let fetched = fetch_missing_packages(&*storer, &*registry, &packages).await;
+
+                if !fetched.is_empty() {
+                    client
+                        .log_message(
+                            MessageType::LOG,
+                            format!(
+                                "Fetched {} missing packages, republishing diagnostics",
+                                fetched.len()
+                            ),
+                        )
+                        .await;
+
+                    let diagnostics = generate_diagnostics(&*parser, &*storer, &content);
+
+                    client.publish_diagnostics(uri, diagnostics, None).await;
+                }
+            });
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -176,78 +249,31 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let uri = params.text_document.uri.as_str();
-        let content = &params.text_document.text;
-
         self.client
-            .log_message(MessageType::LOG, format!("Document opened: {}", uri))
+            .log_message(
+                MessageType::LOG,
+                format!("Document opened: {}", params.text_document.uri),
+            )
             .await;
 
-        let Some(parser_type) = detect_parser_type(uri) else {
+        self.check_and_publish_diagnostics(params.text_document.uri, params.text_document.text)
+            .await;
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        // With FULL sync mode, the last content change contains the full document text
+        let Some(content) = params.content_changes.into_iter().last().map(|c| c.text) else {
             return;
         };
-
-        let Some(parser) = self.parsers.get(&parser_type) else {
-            return;
-        };
-
-        let Some(storer) = &self.storer else {
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    "Storer not available, skipping diagnostics",
-                )
-                .await;
-            return;
-        };
-
-        // Parse document to get packages (needed for on-demand fetch)
-        let packages = parser.parse(content).unwrap_or_default();
-
-        let diagnostics = generate_diagnostics(&**parser, &**storer, content);
 
         self.client
             .log_message(
                 MessageType::LOG,
-                format!("Publishing {} diagnostics for {}", diagnostics.len(), uri),
+                format!("Document changed: {}", params.text_document.uri),
             )
             .await;
 
-        self.client
-            .publish_diagnostics(params.text_document.uri.clone(), diagnostics, None)
+        self.check_and_publish_diagnostics(params.text_document.uri, content)
             .await;
-
-        // Spawn background task to fetch missing packages
-        if !packages.is_empty() {
-            let Some(registry) = self.registries.get(&parser_type).cloned() else {
-                return;
-            };
-
-            let storer = storer.clone();
-            let client = self.client.clone();
-            let uri = params.text_document.uri;
-            let content = params.text_document.text;
-            let parser = parser.clone();
-
-            tokio::spawn(async move {
-                let fetched = fetch_missing_packages(&*storer, &*registry, &packages).await;
-
-                if !fetched.is_empty() {
-                    client
-                        .log_message(
-                            MessageType::LOG,
-                            format!(
-                                "Fetched {} missing packages, republishing diagnostics",
-                                fetched.len()
-                            ),
-                        )
-                        .await;
-
-                    let diagnostics = generate_diagnostics(&*parser, &*storer, &content);
-
-                    client.publish_diagnostics(uri, diagnostics, None).await;
-                }
-            });
-        }
     }
 }

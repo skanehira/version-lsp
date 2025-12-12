@@ -110,6 +110,25 @@ fn create_did_open_notification(uri: &str, content: &str) -> Request {
         .finish()
 }
 
+fn create_did_change_notification(uri: &str, content: &str, version: i32) -> Request {
+    Request::build("textDocument/didChange")
+        .params(
+            serde_json::to_value(DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    uri: uri.parse().unwrap(),
+                    version,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: content.to_string(),
+                }],
+            })
+            .unwrap(),
+        )
+        .finish()
+}
+
 use tokio::sync::mpsc;
 
 /// Collect notifications in background and return a receiver
@@ -325,5 +344,94 @@ jobs:
     assert_eq!(
         params.diagnostics[0].message,
         "Version 999.0.0 not found in registry"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_did_change_publishes_diagnostics_on_version_update() {
+    // 1. Setup real Cache with test data
+    let (_temp_dir, cache) =
+        create_test_cache(&[("actions/checkout", vec!["4.0.0", "3.0.0", "2.0.0"])]);
+
+    // 2. Setup mock Registry
+    let registry =
+        MockRegistry::new().with_versions("actions/checkout", vec!["4.0.0", "3.0.0", "2.0.0"]);
+
+    let registries: HashMap<RegistryType, Arc<dyn Registry>> =
+        HashMap::from([(RegistryType::GitHubActions, Arc::new(registry) as _)]);
+
+    // 3. Create LspService
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), registries)).finish();
+
+    // Start notification collector immediately
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    // 4. Initialize
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+
+    let uri = "file:///test/.github/workflows/ci.yml";
+
+    // 5. didOpen with latest version (no warning)
+    let initial_content = r#"
+name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@4.0.0
+"#;
+
+    service
+        .call(create_did_open_notification(uri, initial_content))
+        .await
+        .unwrap();
+
+    // Wait for initial publishDiagnostics (should be empty)
+    let notification =
+        wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+            .await
+            .expect("Expected publishDiagnostics notification");
+    let params: PublishDiagnosticsParams =
+        serde_json::from_value(notification.params().unwrap().clone()).unwrap();
+    assert!(params.diagnostics.is_empty());
+
+    // 6. didChange to outdated version
+    let updated_content = r#"
+name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3.0.0
+"#;
+
+    service
+        .call(create_did_change_notification(uri, updated_content, 2))
+        .await
+        .unwrap();
+
+    // 7. Receive publishDiagnostics notification with warning
+    let notification =
+        wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+            .await
+            .expect("Expected publishDiagnostics notification after didChange");
+
+    let params: PublishDiagnosticsParams =
+        serde_json::from_value(notification.params().unwrap().clone()).unwrap();
+    assert_eq!(params.diagnostics.len(), 1);
+    assert_eq!(
+        params.diagnostics[0].severity,
+        Some(DiagnosticSeverity::WARNING)
+    );
+    assert_eq!(
+        params.diagnostics[0].message,
+        "Update available: 3.0.0 -> 4.0.0"
     );
 }
