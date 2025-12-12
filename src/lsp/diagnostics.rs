@@ -5,15 +5,15 @@ use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use crate::parser::traits::Parser;
 use crate::parser::types::PackageInfo;
 use crate::version::checker::{
-    VersionCompareResult, VersionResolver, VersionStatus, compare_version,
+    VersionCompareResult, VersionStatus, VersionStorer, compare_version,
 };
 
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Generate diagnostics for a document by parsing and checking versions
-pub fn generate_diagnostics(
+pub fn generate_diagnostics<S: VersionStorer>(
     parser: &dyn Parser,
-    resolver: &impl VersionResolver,
+    storer: &S,
     content: &str,
 ) -> Vec<Diagnostic> {
     let packages = parser.parse(content).unwrap_or_default();
@@ -22,7 +22,7 @@ pub fn generate_diagnostics(
         .iter()
         .filter_map(|package| {
             let result = compare_version(
-                resolver,
+                storer,
                 package.registry_type.as_str(),
                 &package.name,
                 &package.version,
@@ -89,7 +89,7 @@ mod tests {
     use super::*;
     use crate::parser::traits::MockParser;
     use crate::parser::types::RegistryType;
-    use crate::version::checker::MockVersionResolver;
+    use crate::version::checker::MockVersionStorer;
     use rstest::rstest;
 
     fn make_package_info(name: &str, version: &str, line: usize, column: usize) -> PackageInfo {
@@ -148,15 +148,15 @@ mod tests {
         });
 
         let exists = version_exists;
-        let mut resolver = MockVersionResolver::new();
-        resolver
+        let mut storer = MockVersionStorer::new();
+        storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
-        resolver
+        storer
             .expect_version_exists()
             .returning(move |_, _, _| Ok(exists));
 
-        let diagnostics = generate_diagnostics(&parser, &resolver, "content");
+        let diagnostics = generate_diagnostics(&parser, &storer, "content");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Some(expected_severity));
@@ -170,15 +170,13 @@ mod tests {
             .expect_parse()
             .returning(|_| Ok(vec![make_package_info("actions/checkout", "4.0.0", 5, 14)]));
 
-        let mut resolver = MockVersionResolver::new();
-        resolver
+        let mut storer = MockVersionStorer::new();
+        storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
-        resolver
-            .expect_version_exists()
-            .returning(|_, _, _| Ok(true));
+        storer.expect_version_exists().returning(|_, _, _| Ok(true));
 
-        let diagnostics = generate_diagnostics(&parser, &resolver, "content");
+        let diagnostics = generate_diagnostics(&parser, &storer, "content");
 
         assert!(diagnostics.is_empty());
     }
@@ -190,12 +188,12 @@ mod tests {
             .expect_parse()
             .returning(|_| Ok(vec![make_package_info("actions/checkout", "4.0.0", 5, 14)]));
 
-        let mut resolver = MockVersionResolver::new();
-        resolver
+        let mut storer = MockVersionStorer::new();
+        storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(None));
 
-        let diagnostics = generate_diagnostics(&parser, &resolver, "content");
+        let diagnostics = generate_diagnostics(&parser, &storer, "content");
 
         assert!(diagnostics.is_empty());
     }
@@ -216,15 +214,13 @@ mod tests {
             }])
         });
 
-        let mut resolver = MockVersionResolver::new();
-        resolver
+        let mut storer = MockVersionStorer::new();
+        storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
-        resolver
-            .expect_version_exists()
-            .returning(|_, _, _| Ok(true));
+        storer.expect_version_exists().returning(|_, _, _| Ok(true));
 
-        let diagnostics = generate_diagnostics(&parser, &resolver, "content");
+        let diagnostics = generate_diagnostics(&parser, &storer, "content");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(

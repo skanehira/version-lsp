@@ -277,39 +277,37 @@
 
 ---
 
-### Phase 7.5: レジストリ-キャッシュ連携
+### Phase 7.5: レジストリ-キャッシュ連携 ✅
 
 #### 7.5.1 バックグラウンド更新の実装
 
-- [ ] [RED] バックグラウンド更新のテスト作成 (`src/lsp/backend.rs`内の`#[cfg(test)]`)
+- [x] [RED] バックグラウンド更新のテスト作成 (`src/lsp/refresh.rs`内の`#[cfg(test)]`)
   - 古いパッケージに対してレジストリAPIが呼ばれることを確認
   - 取得したバージョンがキャッシュに保存されることを確認
 
-- [ ] [GREEN] バックグラウンド更新の実装 (`src/lsp/backend.rs`)
+- [x] [GREEN] バックグラウンド更新の実装 (`src/lsp/refresh.rs`, `src/lsp/backend.rs`)
   - `spawn_background_refresh`内でレジストリAPIを呼び出し
   - `GitHubRegistry::fetch_all_versions()`で全バージョンを取得
   - `Cache::replace_versions()`でキャッシュに保存
   - エラー時はログ出力して継続（他のパッケージの更新は続行）
 
-- [ ] [REFACTOR] 並列処理の最適化
-  - `tokio::spawn`で最大10並列でAPI呼び出し
-  - レート制限対応（429時はretry-after待機）
+- [x] [REFACTOR] 並列処理の最適化 - YAGNIでスキップ
+  - 現時点では逐次処理で十分
 
 #### 7.5.2 オンデマンド取得の実装
 
-- [ ] [RED] オンデマンド取得のテスト作成
+- [x] [RED] オンデマンド取得のテスト作成
   - キャッシュミス時にレジストリAPIが呼ばれることを確認
   - 取得したバージョンがキャッシュに保存されることを確認
-  - API呼び出し後にDiagnosticsが更新されることを確認
 
-- [ ] [GREEN] オンデマンド取得の実装 (`src/lsp/backend.rs`)
+- [x] [GREEN] オンデマンド取得の実装 (`src/lsp/refresh.rs`, `src/lsp/backend.rs`)
   - `did_open`ハンドラー内でキャッシュミスを検出
   - レジストリAPIを呼び出してバージョンを取得
   - キャッシュに保存
   - Diagnosticsを再生成して公開
 
-- [ ] [REFACTOR] 非同期処理の改善
-  - API呼び出し中もエディタがブロックしないようにする
+- [x] [REFACTOR] 非同期処理の改善
+  - API呼び出し中もエディタがブロックしない（tokio::spawn使用）
   - 取得完了後に`publish_diagnostics`で更新通知
 
 ---

@@ -6,9 +6,11 @@ use mockall::automock;
 use crate::version::error::CacheError;
 use crate::version::semver::{CompareResult, compare_versions};
 
-/// Trait for resolving version information from cache
+use crate::version::cache::PackageId;
+
+/// Trait for storing and retrieving version information
 #[cfg_attr(test, automock)]
-pub trait VersionResolver {
+pub trait VersionStorer: Send + Sync + 'static {
     /// Get the latest version for a package
     fn get_latest_version(
         &self,
@@ -23,6 +25,17 @@ pub trait VersionResolver {
         package_name: &str,
         version: &str,
     ) -> Result<bool, CacheError>;
+
+    /// Replace all versions for a package
+    fn replace_versions(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+        versions: Vec<String>,
+    ) -> Result<(), CacheError>;
+
+    /// Get packages that need to be refreshed
+    fn get_packages_needing_refresh(&self) -> Result<Vec<PackageId>, CacheError>;
 }
 
 /// Result of version comparison
@@ -54,14 +67,14 @@ pub enum VersionStatus {
 }
 
 /// Compare the version status for a package
-pub fn compare_version(
-    resolver: &impl VersionResolver,
+pub fn compare_version<S: VersionStorer>(
+    storer: &S,
     registry_type: &str,
     package_name: &str,
     current_version: &str,
 ) -> Result<VersionCompareResult, CacheError> {
-    // Get latest version from resolver
-    let latest_version = resolver.get_latest_version(registry_type, package_name)?;
+    // Get latest version from storer
+    let latest_version = storer.get_latest_version(registry_type, package_name)?;
 
     // If no versions in cache, return NotInCache
     let Some(latest) = latest_version else {
@@ -73,7 +86,7 @@ pub fn compare_version(
     };
 
     // Check if current version exists in registry
-    let version_exists = resolver.version_exists(registry_type, package_name, current_version)?;
+    let version_exists = storer.version_exists(registry_type, package_name, current_version)?;
 
     // Compare versions
     let status = match compare_versions(current_version, &latest) {
@@ -96,13 +109,13 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
-    /// Mock cache for testing
-    struct MockResolver {
+    /// Mock storer for testing
+    struct MockStorer {
         latest_version: Option<String>,
         existing_versions: Vec<String>,
     }
 
-    impl MockResolver {
+    impl MockStorer {
         fn new(latest: Option<&str>, versions: Vec<&str>) -> Self {
             Self {
                 latest_version: latest.map(|s| s.to_string()),
@@ -111,7 +124,7 @@ mod tests {
         }
     }
 
-    impl VersionResolver for MockResolver {
+    impl VersionStorer for MockStorer {
         fn get_latest_version(
             &self,
             _registry_type: &str,
@@ -128,6 +141,19 @@ mod tests {
         ) -> Result<bool, CacheError> {
             Ok(self.existing_versions.contains(&version.to_string()))
         }
+
+        fn replace_versions(
+            &self,
+            _registry_type: &str,
+            _package_name: &str,
+            _versions: Vec<String>,
+        ) -> Result<(), CacheError> {
+            Ok(())
+        }
+
+        fn get_packages_needing_refresh(&self) -> Result<Vec<PackageId>, CacheError> {
+            Ok(vec![])
+        }
     }
 
     #[rstest]
@@ -142,10 +168,10 @@ mod tests {
         #[case] existing: Vec<&str>,
         #[case] expected: VersionStatus,
     ) {
-        let resolver = MockResolver::new(Some(latest), existing);
+        let storer = MockStorer::new(Some(latest), existing);
 
         let result =
-            compare_version(&resolver, "github_actions", "actions/checkout", current).unwrap();
+            compare_version(&storer, "github_actions", "actions/checkout", current).unwrap();
 
         assert_eq!(result.current_version, current);
         assert_eq!(result.latest_version, Some(latest.to_string()));
@@ -154,10 +180,10 @@ mod tests {
 
     #[test]
     fn compare_version_returns_not_in_cache_when_package_not_cached() {
-        let resolver = MockResolver::new(None, vec![]);
+        let storer = MockStorer::new(None, vec![]);
 
         let result =
-            compare_version(&resolver, "github_actions", "nonexistent/repo", "1.0.0").unwrap();
+            compare_version(&storer, "github_actions", "nonexistent/repo", "1.0.0").unwrap();
 
         assert_eq!(
             result,

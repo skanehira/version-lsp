@@ -1,9 +1,10 @@
 use std::path::Path;
+use std::sync::Mutex;
 
 use rusqlite::Connection;
 use tracing::{debug, info};
 
-use crate::version::checker::VersionResolver;
+use crate::version::checker::VersionStorer;
 use crate::version::error::CacheError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,8 +14,7 @@ pub struct PackageId {
 }
 
 pub struct Cache {
-    conn: Connection,
-    #[allow(dead_code)]
+    conn: Mutex<Connection>,
     refresh_interval: i64,
 }
 
@@ -31,7 +31,7 @@ impl Cache {
         debug!("Database connection established");
 
         let cache = Self {
-            conn,
+            conn: Mutex::new(conn),
             refresh_interval,
         };
 
@@ -44,7 +44,9 @@ impl Cache {
     fn create_schema(&self) -> Result<(), CacheError> {
         debug!("Creating database schema");
 
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+
+        conn.execute(
             r#"
             CREATE TABLE IF NOT EXISTS packages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,12 +59,12 @@ impl Cache {
             [],
         )?;
 
-        self.conn.execute(
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_updated_at ON packages(updated_at)",
             [],
         )?;
 
-        self.conn.execute(
+        conn.execute(
             r#"
             CREATE TABLE IF NOT EXISTS versions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +77,7 @@ impl Cache {
             [],
         )?;
 
-        self.conn.execute(
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_package_id ON versions(package_id)",
             [],
         )?;
@@ -84,8 +86,78 @@ impl Cache {
         Ok(())
     }
 
-    pub fn replace_versions(
-        &mut self,
+    pub fn get_versions(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+    ) -> Result<Vec<String>, CacheError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT v.version FROM versions v
+            JOIN packages p ON v.package_id = p.id
+            WHERE p.registry_type = ?1 AND p.package_name = ?2
+            "#,
+        )?;
+
+        let versions = stmt
+            .query_map((registry_type, package_name), |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+
+        Ok(versions)
+    }
+}
+
+impl VersionStorer for Cache {
+    fn get_latest_version(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+    ) -> Result<Option<String>, CacheError> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            r#"
+            SELECT v.version FROM versions v
+            JOIN packages p ON v.package_id = p.id
+            WHERE p.registry_type = ?1 AND p.package_name = ?2
+            ORDER BY v.id ASC
+            LIMIT 1
+            "#,
+            (registry_type, package_name),
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(version) => Ok(Some(version)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn version_exists(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+        version: &str,
+    ) -> Result<bool, CacheError> {
+        let conn = self.conn.lock().unwrap();
+        let exists: bool = conn.query_row(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM versions v
+                JOIN packages p ON v.package_id = p.id
+                WHERE p.registry_type = ?1 AND p.package_name = ?2 AND v.version = ?3
+            )
+            "#,
+            (registry_type, package_name, version),
+            |row| row.get(0),
+        )?;
+
+        Ok(exists)
+    }
+
+    fn replace_versions(
+        &self,
         registry_type: &str,
         package_name: &str,
         versions: Vec<String>,
@@ -102,7 +174,8 @@ impl Cache {
             .unwrap()
             .as_millis() as i64;
 
-        let tx = self.conn.transaction()?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
 
         // Insert or update package
         tx.execute(
@@ -142,72 +215,7 @@ impl Cache {
         Ok(())
     }
 
-    pub fn get_versions(
-        &self,
-        registry_type: &str,
-        package_name: &str,
-    ) -> Result<Vec<String>, CacheError> {
-        let mut stmt = self.conn.prepare(
-            r#"
-            SELECT v.version FROM versions v
-            JOIN packages p ON v.package_id = p.id
-            WHERE p.registry_type = ?1 AND p.package_name = ?2
-            "#,
-        )?;
-
-        let versions = stmt
-            .query_map((registry_type, package_name), |row| row.get(0))?
-            .collect::<Result<Vec<String>, _>>()?;
-
-        Ok(versions)
-    }
-
-    pub fn version_exists(
-        &self,
-        registry_type: &str,
-        package_name: &str,
-        version: &str,
-    ) -> Result<bool, CacheError> {
-        let exists: bool = self.conn.query_row(
-            r#"
-            SELECT EXISTS(
-                SELECT 1 FROM versions v
-                JOIN packages p ON v.package_id = p.id
-                WHERE p.registry_type = ?1 AND p.package_name = ?2 AND v.version = ?3
-            )
-            "#,
-            (registry_type, package_name, version),
-            |row| row.get(0),
-        )?;
-
-        Ok(exists)
-    }
-
-    pub fn get_latest_version(
-        &self,
-        registry_type: &str,
-        package_name: &str,
-    ) -> Result<Option<String>, CacheError> {
-        let result = self.conn.query_row(
-            r#"
-            SELECT v.version FROM versions v
-            JOIN packages p ON v.package_id = p.id
-            WHERE p.registry_type = ?1 AND p.package_name = ?2
-            ORDER BY v.id ASC
-            LIMIT 1
-            "#,
-            (registry_type, package_name),
-            |row| row.get(0),
-        );
-
-        match result {
-            Ok(version) => Ok(Some(version)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    pub fn get_packages_needing_refresh(&self) -> Result<Vec<PackageId>, CacheError> {
+    fn get_packages_needing_refresh(&self) -> Result<Vec<PackageId>, CacheError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -215,9 +223,9 @@ impl Cache {
 
         let threshold = now - self.refresh_interval;
 
-        let mut stmt = self
-            .conn
-            .prepare("SELECT registry_type, package_name FROM packages WHERE updated_at < ?1")?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT registry_type, package_name FROM packages WHERE updated_at < ?1")?;
 
         let packages = stmt
             .query_map([threshold], |row| {
@@ -232,25 +240,6 @@ impl Cache {
     }
 }
 
-impl VersionResolver for Cache {
-    fn get_latest_version(
-        &self,
-        registry_type: &str,
-        package_name: &str,
-    ) -> Result<Option<String>, CacheError> {
-        Cache::get_latest_version(self, registry_type, package_name)
-    }
-
-    fn version_exists(
-        &self,
-        registry_type: &str,
-        package_name: &str,
-        version: &str,
-    ) -> Result<bool, CacheError> {
-        Cache::version_exists(self, registry_type, package_name, version)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,7 +250,7 @@ mod tests {
     fn replace_versions_creates_new_package() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let mut cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400).unwrap();
 
         let versions = vec![
             "1.0.0".to_string(),
@@ -280,7 +269,7 @@ mod tests {
     fn replace_versions_updates_existing_package() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let mut cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400).unwrap();
 
         let initial_versions = vec!["1.0.0".to_string()];
         cache
@@ -310,7 +299,7 @@ mod tests {
     fn get_versions_performance_with_1000_versions() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let mut cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400).unwrap();
 
         let versions: Vec<String> = (0..1000).map(|i| format!("{}.0.0", i)).collect();
         cache
@@ -343,7 +332,7 @@ mod tests {
     ) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let mut cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400).unwrap();
 
         let versions = vec!["1.0.0".to_string(), "2.0.0".to_string()];
         cache.replace_versions("npm", "axios", versions).unwrap();
@@ -367,7 +356,7 @@ mod tests {
     ) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let mut cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400).unwrap();
 
         let versions = vec![
             "1.0.0".to_string(),
@@ -389,7 +378,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         // refresh_interval = 100ms
-        let mut cache = Cache::new(&db_path, 100).unwrap();
+        let cache = Cache::new(&db_path, 100).unwrap();
 
         cache
             .replace_versions("npm", "axios", vec!["1.0.0".to_string()])
@@ -418,7 +407,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         // refresh_interval = 1 hour (in ms)
-        let mut cache = Cache::new(&db_path, 3600000).unwrap();
+        let cache = Cache::new(&db_path, 3600000).unwrap();
 
         cache
             .replace_versions("npm", "axios", vec!["1.0.0".to_string()])

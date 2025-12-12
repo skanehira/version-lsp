@@ -41,6 +41,7 @@ impl Default for GitHubRegistry {
     }
 }
 
+#[async_trait::async_trait]
 impl Registry for GitHubRegistry {
     fn registry_type(&self) -> RegistryType {
         RegistryType::GitHubActions
