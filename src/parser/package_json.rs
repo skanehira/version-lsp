@@ -52,6 +52,40 @@ impl PackageJsonParser {
     const DEPENDENCY_FIELDS: [&'static str; 3] =
         ["dependencies", "devDependencies", "peerDependencies"];
 
+    /// Parse npm alias format: npm:package@version or npm:@scope/package@version
+    /// Returns (actual_package_name, version)
+    fn parse_npm_alias(value: &str) -> Option<(String, String)> {
+        let rest = value.strip_prefix("npm:")?;
+
+        // Handle scoped packages: @scope/package@version
+        if rest.starts_with('@') {
+            // Find the second @ which separates package name from version
+            // @scope/package@version -> find @ after the first /
+            let slash_pos = rest.find('/')?;
+            let after_slash = &rest[slash_pos + 1..];
+
+            if let Some(at_pos) = after_slash.find('@') {
+                // Has version: @scope/package@version
+                let package_name = &rest[..slash_pos + 1 + at_pos];
+                let version = &after_slash[at_pos + 1..];
+                Some((package_name.to_string(), version.to_string()))
+            } else {
+                // No version: @scope/package -> use "latest"
+                Some((rest.to_string(), "latest".to_string()))
+            }
+        } else {
+            // Non-scoped package: package@version
+            if let Some(at_pos) = rest.find('@') {
+                let package_name = &rest[..at_pos];
+                let version = &rest[at_pos + 1..];
+                Some((package_name.to_string(), version.to_string()))
+            } else {
+                // No version: package -> use "latest"
+                Some((rest.to_string(), "latest".to_string()))
+            }
+        }
+    }
+
     /// Extract dependencies from the root object
     fn extract_dependencies(
         &self,
@@ -112,8 +146,16 @@ impl PackageJsonParser {
                 continue;
             }
 
-            let package_name = self.get_string_value(key_node, content);
-            let version = self.get_string_value(value_node, content);
+            let key_name = self.get_string_value(key_node, content);
+            let raw_version = self.get_string_value(value_node, content);
+
+            // Check for npm alias format: npm:package@version
+            let (package_name, version) =
+                if let Some((name, ver)) = Self::parse_npm_alias(&raw_version) {
+                    (name, ver)
+                } else {
+                    (key_name, raw_version)
+                };
 
             let start_point = value_node.start_position();
             let start_offset = value_node.start_byte();
@@ -404,5 +446,50 @@ mod tests {
                 column: 15,
             }
         );
+    }
+
+    #[test]
+    fn parse_extracts_npm_alias() {
+        let parser = PackageJsonParser::new();
+        let content = r#"{
+  "dependencies": {
+    "vite": "npm:rolldown-vite@7.2.2"
+  }
+}"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 1);
+        // npm alias should be normalized: name becomes "rolldown-vite", version becomes "7.2.2"
+        assert_eq!(result[0].name, "rolldown-vite");
+        assert_eq!(result[0].version, "7.2.2");
+    }
+
+    #[test]
+    fn parse_extracts_npm_alias_with_scope() {
+        let parser = PackageJsonParser::new();
+        let content = r#"{
+  "dependencies": {
+    "my-fork": "npm:@org/pkg@^1.0.0"
+  }
+}"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 1);
+        // npm alias with scoped package: name becomes "@org/pkg", version becomes "^1.0.0"
+        assert_eq!(result[0].name, "@org/pkg");
+        assert_eq!(result[0].version, "^1.0.0");
+    }
+
+    #[test]
+    fn parse_extracts_npm_alias_without_version() {
+        let parser = PackageJsonParser::new();
+        let content = r#"{
+  "dependencies": {
+    "npa": "npm:npm-package-arg"
+  }
+}"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 1);
+        // npm alias without version: name becomes "npm-package-arg", version is empty or "latest"
+        assert_eq!(result[0].name, "npm-package-arg");
+        assert_eq!(result[0].version, "latest");
     }
 }
