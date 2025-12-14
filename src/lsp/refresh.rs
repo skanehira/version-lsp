@@ -10,6 +10,7 @@ use crate::version::registry::Registry;
 /// Refresh versions for packages that need updating
 ///
 /// Fetches latest versions from the registry and updates the cache.
+/// Uses try_start_fetch/finish_fetch to prevent duplicate fetches across processes.
 /// Errors are logged but do not stop processing of other packages.
 pub async fn refresh_packages<S: VersionStorer>(
     storer: &S,
@@ -17,6 +18,25 @@ pub async fn refresh_packages<S: VersionStorer>(
     packages: Vec<PackageId>,
 ) {
     for package in packages {
+        // Try to acquire fetch lock (returns false if another process is fetching)
+        let can_fetch = storer
+            .try_start_fetch(&package.registry_type, &package.package_name)
+            .inspect_err(|e| {
+                error!(
+                    "Failed to start fetch for {}/{}: {}",
+                    package.registry_type, package.package_name, e
+                )
+            })
+            .unwrap_or(false);
+
+        if !can_fetch {
+            info!(
+                "Skipping {}/{}: already being fetched by another process",
+                package.registry_type, package.package_name
+            );
+            continue;
+        }
+
         let result = registry.fetch_all_versions(&package.package_name).await;
 
         match result {
@@ -40,12 +60,23 @@ pub async fn refresh_packages<S: VersionStorer>(
                 );
             }
         }
+
+        // Release fetch lock (always call regardless of success/failure)
+        let _ = storer
+            .finish_fetch(&package.registry_type, &package.package_name)
+            .inspect_err(|e| {
+                error!(
+                    "Failed to finish fetch for {}/{}: {}",
+                    package.registry_type, package.package_name, e
+                )
+            });
     }
 }
 
 /// Fetch packages that are not in the cache (on-demand fetch)
 ///
 /// Identifies packages not in cache, fetches from registry, and updates cache.
+/// Uses try_start_fetch/finish_fetch to prevent duplicate fetches across processes.
 /// Returns the list of packages that were successfully fetched and cached.
 pub async fn fetch_missing_packages<S: VersionStorer>(
     storer: &S,
@@ -65,6 +96,25 @@ pub async fn fetch_missing_packages<S: VersionStorer>(
             .is_some();
 
         if in_cache {
+            continue;
+        }
+
+        // Try to acquire fetch lock (returns false if another process is fetching)
+        let can_fetch = storer
+            .try_start_fetch(registry_type, &package.name)
+            .inspect_err(|e| {
+                error!(
+                    "Failed to start fetch for {}/{}: {}",
+                    registry_type, package.name, e
+                )
+            })
+            .unwrap_or(false);
+
+        if !can_fetch {
+            info!(
+                "Skipping {}/{}: already being fetched by another process",
+                registry_type, package.name
+            );
             continue;
         }
 
@@ -95,6 +145,16 @@ pub async fn fetch_missing_packages<S: VersionStorer>(
                 );
             }
         }
+
+        // Release fetch lock (always call regardless of success/failure)
+        let _ = storer
+            .finish_fetch(registry_type, &package.name)
+            .inspect_err(|e| {
+                error!(
+                    "Failed to finish fetch for {}/{}: {}",
+                    registry_type, package.name, e
+                )
+            });
     }
 
     fetched

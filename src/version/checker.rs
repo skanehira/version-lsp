@@ -44,6 +44,13 @@ pub trait VersionStorer: Send + Sync + 'static {
 
     /// Get packages that need to be refreshed
     fn get_packages_needing_refresh(&self) -> Result<Vec<PackageId>, CacheError>;
+
+    /// Try to start fetching a package. Returns true if fetch can proceed.
+    /// Returns false if another process is already fetching this package.
+    fn try_start_fetch(&self, registry_type: &str, package_name: &str) -> Result<bool, CacheError>;
+
+    /// Mark fetch as complete (success or failure)
+    fn finish_fetch(&self, registry_type: &str, package_name: &str) -> Result<(), CacheError>;
 }
 
 /// Result of version comparison
@@ -173,6 +180,22 @@ mod tests {
 
         fn get_packages_needing_refresh(&self) -> Result<Vec<PackageId>, CacheError> {
             Ok(vec![])
+        }
+
+        fn try_start_fetch(
+            &self,
+            _registry_type: &str,
+            _package_name: &str,
+        ) -> Result<bool, CacheError> {
+            Ok(true)
+        }
+
+        fn finish_fetch(
+            &self,
+            _registry_type: &str,
+            _package_name: &str,
+        ) -> Result<(), CacheError> {
+            Ok(())
         }
     }
 

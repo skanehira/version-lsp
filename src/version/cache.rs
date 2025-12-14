@@ -41,6 +41,9 @@ impl Cache {
         Ok(cache)
     }
 
+    /// Timeout for fetch operations in milliseconds (30 seconds)
+    const FETCH_TIMEOUT_MS: i64 = 30_000;
+
     fn create_schema(&self) -> Result<(), CacheError> {
         debug!("Creating database schema");
 
@@ -53,11 +56,26 @@ impl Cache {
                 registry_type TEXT NOT NULL,
                 package_name TEXT NOT NULL,
                 updated_at INTEGER NOT NULL,
+                fetching_since INTEGER,
                 UNIQUE(registry_type, package_name)
             )
             "#,
             [],
         )?;
+
+        // Migration: Add fetching_since column if it doesn't exist
+        let has_fetching_since: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('packages') WHERE name = 'fetching_since'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_fetching_since {
+            conn.execute("ALTER TABLE packages ADD COLUMN fetching_since INTEGER", [])?;
+            debug!("Added fetching_since column to packages table");
+        }
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_updated_at ON packages(updated_at)",
@@ -120,7 +138,7 @@ impl VersionStorer for Cache {
             SELECT v.version FROM versions v
             JOIN packages p ON v.package_id = p.id
             WHERE p.registry_type = ?1 AND p.package_name = ?2
-            ORDER BY v.id ASC
+            ORDER BY v.id DESC
             LIMIT 1
             "#,
             (registry_type, package_name),
@@ -246,6 +264,56 @@ impl VersionStorer for Cache {
 
         Ok(packages)
     }
+
+    fn try_start_fetch(&self, registry_type: &str, package_name: &str) -> Result<bool, CacheError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let timeout_threshold = now - Cache::FETCH_TIMEOUT_MS;
+
+        let conn = self.conn.lock().unwrap();
+
+        // Try to set fetching_since if:
+        // 1. Package doesn't exist (will be created by replace_versions later)
+        // 2. fetching_since is NULL (not being fetched)
+        // 3. fetching_since is older than timeout (previous fetch timed out)
+        let rows_affected = conn.execute(
+            r#"
+            UPDATE packages
+            SET fetching_since = ?1
+            WHERE registry_type = ?2 AND package_name = ?3
+              AND (fetching_since IS NULL OR fetching_since < ?4)
+            "#,
+            (now, registry_type, package_name, timeout_threshold),
+        )?;
+
+        if rows_affected > 0 {
+            return Ok(true);
+        }
+
+        // Package might not exist yet, check if we can proceed
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM packages WHERE registry_type = ?1 AND package_name = ?2)",
+            (registry_type, package_name),
+            |row| row.get(0),
+        )?;
+
+        // If package doesn't exist, we can proceed (it will be created by replace_versions)
+        Ok(!exists)
+    }
+
+    fn finish_fetch(&self, registry_type: &str, package_name: &str) -> Result<(), CacheError> {
+        let conn = self.conn.lock().unwrap();
+
+        conn.execute(
+            "UPDATE packages SET fetching_since = NULL WHERE registry_type = ?1 AND package_name = ?2",
+            (registry_type, package_name),
+        )?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -354,10 +422,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case("npm", "axios", Some("1.0.0".to_string()))]
+    #[case("npm", "axios", Some("3.0.0".to_string()))]
     #[case("npm", "nonexistent", None)]
     #[case("crates", "axios", None)]
-    fn get_latest_version_returns_expected(
+    fn get_latest_version_returns_last_inserted(
         #[case] registry_type: &str,
         #[case] package_name: &str,
         #[case] expected: Option<String>,
@@ -423,5 +491,75 @@ mod tests {
 
         let stale = cache.get_packages_needing_refresh().unwrap();
         assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn try_start_fetch_returns_true_for_new_package() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400).unwrap();
+
+        // New package not in DB should allow fetch
+        let can_fetch = cache.try_start_fetch("npm", "new-package").unwrap();
+        assert!(can_fetch);
+    }
+
+    #[test]
+    fn try_start_fetch_returns_true_for_package_not_being_fetched() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400).unwrap();
+
+        // Pre-populate cache (fetching_since is NULL after replace_versions)
+        cache
+            .replace_versions("npm", "axios", vec!["1.0.0".to_string()])
+            .unwrap();
+
+        // Package exists but not being fetched should allow fetch
+        let can_fetch = cache.try_start_fetch("npm", "axios").unwrap();
+        assert!(can_fetch);
+    }
+
+    #[test]
+    fn try_start_fetch_returns_false_for_package_being_fetched() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400).unwrap();
+
+        // Pre-populate cache
+        cache
+            .replace_versions("npm", "axios", vec!["1.0.0".to_string()])
+            .unwrap();
+
+        // First fetch should succeed
+        let can_fetch1 = cache.try_start_fetch("npm", "axios").unwrap();
+        assert!(can_fetch1);
+
+        // Second fetch should fail (already being fetched)
+        let can_fetch2 = cache.try_start_fetch("npm", "axios").unwrap();
+        assert!(!can_fetch2);
+    }
+
+    #[test]
+    fn finish_fetch_clears_fetching_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400).unwrap();
+
+        // Pre-populate cache
+        cache
+            .replace_versions("npm", "axios", vec!["1.0.0".to_string()])
+            .unwrap();
+
+        // Start fetch
+        let can_fetch1 = cache.try_start_fetch("npm", "axios").unwrap();
+        assert!(can_fetch1);
+
+        // Finish fetch
+        cache.finish_fetch("npm", "axios").unwrap();
+
+        // Should be able to fetch again
+        let can_fetch2 = cache.try_start_fetch("npm", "axios").unwrap();
+        assert!(can_fetch2);
     }
 }
