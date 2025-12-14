@@ -40,17 +40,32 @@ pub async fn refresh_packages<S: VersionStorer>(
         let result = registry.fetch_all_versions(&package.package_name).await;
 
         match result {
-            Ok(versions) => {
+            Ok(pkg_versions) => {
                 let save_result = storer.replace_versions(
                     &package.registry_type,
                     &package.package_name,
-                    versions.versions,
+                    pkg_versions.versions,
                 );
                 if let Err(e) = save_result {
                     error!(
                         "Failed to save versions for {}/{}: {}",
                         package.registry_type, package.package_name, e
                     );
+                }
+
+                // Save dist tags if available
+                if !pkg_versions.dist_tags.is_empty() {
+                    let dist_tags_result = storer.save_dist_tags(
+                        &package.registry_type,
+                        &package.package_name,
+                        &pkg_versions.dist_tags,
+                    );
+                    if let Err(e) = dist_tags_result {
+                        error!(
+                            "Failed to save dist tags for {}/{}: {}",
+                            package.registry_type, package.package_name, e
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -126,17 +141,33 @@ pub async fn fetch_missing_packages<S: VersionStorer>(
         let result = registry.fetch_all_versions(&package.name).await;
 
         match result {
-            Ok(versions) => {
+            Ok(pkg_versions) => {
                 let save_result =
-                    storer.replace_versions(registry_type, &package.name, versions.versions);
-                if save_result.is_ok() {
+                    storer.replace_versions(registry_type, &package.name, pkg_versions.versions);
+
+                if save_result
+                    .inspect_err(|e| {
+                        error!(
+                            "Failed to save versions for {}/{}: {}",
+                            registry_type, package.name, e
+                        );
+                    })
+                    .is_ok()
+                {
                     fetched.push(package.name.clone());
-                } else if let Err(e) = save_result {
-                    error!(
-                        "Failed to save versions for {}/{}: {}",
-                        registry_type, package.name, e
-                    );
-                }
+
+                    // Save dist tags if available
+                    if !pkg_versions.dist_tags.is_empty() {
+                        let _ = storer
+                            .save_dist_tags(registry_type, &package.name, &pkg_versions.dist_tags)
+                            .inspect_err(|e| {
+                                error!(
+                                    "Failed to save dist tags for {}/{}: {}",
+                                    registry_type, package.name, e
+                                );
+                            });
+                    }
+                };
             }
             Err(e) => {
                 error!(
