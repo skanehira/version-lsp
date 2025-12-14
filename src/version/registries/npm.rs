@@ -1,10 +1,12 @@
 //! npm registry API implementation
 
+use std::collections::HashMap;
+
 use crate::parser::types::RegistryType;
 use crate::version::error::RegistryError;
 use crate::version::registry::Registry;
 use crate::version::types::PackageVersions;
-use indexmap::IndexMap;
+use semver::Version;
 use serde::Deserialize;
 use tracing::warn;
 
@@ -12,10 +14,9 @@ use tracing::warn;
 const DEFAULT_BASE_URL: &str = "https://registry.npmjs.org";
 
 /// Response from npm registry API
-/// Uses IndexMap to preserve insertion order from JSON
 #[derive(Debug, Deserialize)]
 struct NpmPackageResponse {
-    versions: IndexMap<String, serde_json::Value>,
+    versions: HashMap<String, serde_json::Value>,
 }
 
 /// Registry implementation for npm registry API
@@ -87,7 +88,16 @@ impl Registry for NpmRegistry {
             RegistryError::InvalidResponse(e.to_string())
         })?;
 
-        let versions: Vec<String> = package_info.versions.into_keys().collect();
+        // Sort versions by semver (lowest first, highest last)
+        let mut versions: Vec<(String, Version)> = package_info
+            .versions
+            .into_keys()
+            .filter_map(|v| Version::parse(&v).ok().map(|parsed| (v, parsed)))
+            .collect();
+
+        versions.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+        let versions: Vec<String> = versions.into_iter().map(|(v, _)| v).collect();
 
         Ok(PackageVersions::new(versions))
     }
@@ -99,7 +109,7 @@ mod tests {
     use mockito::Server;
 
     #[tokio::test]
-    async fn fetch_all_versions_returns_versions_from_registry() {
+    async fn fetch_all_versions_returns_versions_sorted_by_semver() {
         let mut server = Server::new_async().await;
 
         let mock = server
@@ -111,8 +121,8 @@ mod tests {
                     "name": "lodash",
                     "versions": {
                         "4.17.21": {},
-                        "4.17.20": {},
-                        "4.17.19": {}
+                        "4.17.19": {},
+                        "4.17.20": {}
                     }
                 }"#,
             )
@@ -123,10 +133,9 @@ mod tests {
         let result = registry.fetch_all_versions("lodash").await.unwrap();
 
         mock.assert_async().await;
-        let mut versions = result.versions;
-        versions.sort();
+        // Versions should be sorted by semver (lowest first, highest last)
         assert_eq!(
-            versions,
+            result.versions,
             vec![
                 "4.17.19".to_string(),
                 "4.17.20".to_string(),
@@ -179,9 +188,11 @@ mod tests {
         let result = registry.fetch_all_versions("@types/node").await.unwrap();
 
         mock.assert_async().await;
-        let mut versions = result.versions;
-        versions.sort();
-        assert_eq!(versions, vec!["18.0.0".to_string(), "20.0.0".to_string()]);
+        // Versions should be sorted by semver
+        assert_eq!(
+            result.versions,
+            vec!["18.0.0".to_string(), "20.0.0".to_string()]
+        );
     }
 
     #[tokio::test]

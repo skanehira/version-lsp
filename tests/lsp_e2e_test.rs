@@ -167,15 +167,15 @@ async fn wait_for_notification(rx: &mut mpsc::Receiver<Request>, method: &str) -
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_did_open_publishes_outdated_version_warning() {
-    // 1. Setup real Cache with test data
+    // 1. Setup real Cache with test data (oldest first, newest last)
     let (_temp_dir, cache) = create_test_cache(
         "github_actions",
-        &[("actions/checkout", vec!["4.0.0", "3.0.0", "2.0.0"])],
+        &[("actions/checkout", vec!["2.0.0", "3.0.0", "4.0.0"])],
     );
 
     // 2. Setup mock Registry
     let registry = MockRegistry::new(RegistryType::GitHubActions)
-        .with_versions("actions/checkout", vec!["4.0.0", "3.0.0", "2.0.0"]);
+        .with_versions("actions/checkout", vec!["2.0.0", "3.0.0", "4.0.0"]);
 
     let registries: HashMap<RegistryType, Arc<dyn Registry>> =
         HashMap::from([(RegistryType::GitHubActions, Arc::new(registry) as _)]);
@@ -237,15 +237,15 @@ jobs:
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_did_open_no_diagnostics_for_latest_version() {
-    // 1. Setup real Cache with test data
+    // 1. Setup real Cache with test data (oldest first, newest last)
     let (_temp_dir, cache) = create_test_cache(
         "github_actions",
-        &[("actions/checkout", vec!["4.0.0", "3.0.0"])],
+        &[("actions/checkout", vec!["3.0.0", "4.0.0"])],
     );
 
     // 2. Setup mock Registry
     let registry = MockRegistry::new(RegistryType::GitHubActions)
-        .with_versions("actions/checkout", vec!["4.0.0", "3.0.0"]);
+        .with_versions("actions/checkout", vec!["3.0.0", "4.0.0"]);
 
     let registries: HashMap<RegistryType, Arc<dyn Registry>> =
         HashMap::from([(RegistryType::GitHubActions, Arc::new(registry) as _)]);
@@ -295,15 +295,15 @@ jobs:
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_did_open_publishes_error_for_nonexistent_version() {
-    // 1. Setup real Cache with test data
+    // 1. Setup real Cache with test data (oldest first, newest last)
     let (_temp_dir, cache) = create_test_cache(
         "github_actions",
-        &[("actions/checkout", vec!["4.0.0", "3.0.0"])],
+        &[("actions/checkout", vec!["3.0.0", "4.0.0"])],
     );
 
     // 2. Setup mock Registry
     let registry = MockRegistry::new(RegistryType::GitHubActions)
-        .with_versions("actions/checkout", vec!["4.0.0", "3.0.0"]);
+        .with_versions("actions/checkout", vec!["3.0.0", "4.0.0"]);
 
     let registries: HashMap<RegistryType, Arc<dyn Registry>> =
         HashMap::from([(RegistryType::GitHubActions, Arc::new(registry) as _)]);
@@ -361,15 +361,15 @@ jobs:
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_did_change_publishes_diagnostics_on_version_update() {
-    // 1. Setup real Cache with test data
+    // 1. Setup real Cache with test data (oldest first, newest last)
     let (_temp_dir, cache) = create_test_cache(
         "github_actions",
-        &[("actions/checkout", vec!["4.0.0", "3.0.0", "2.0.0"])],
+        &[("actions/checkout", vec!["2.0.0", "3.0.0", "4.0.0"])],
     );
 
     // 2. Setup mock Registry
     let registry = MockRegistry::new(RegistryType::GitHubActions)
-        .with_versions("actions/checkout", vec!["4.0.0", "3.0.0", "2.0.0"]);
+        .with_versions("actions/checkout", vec!["2.0.0", "3.0.0", "4.0.0"]);
 
     let registries: HashMap<RegistryType, Arc<dyn Registry>> =
         HashMap::from([(RegistryType::GitHubActions, Arc::new(registry) as _)]);
@@ -456,13 +456,13 @@ jobs:
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_package_json_publishes_outdated_version_warning() {
-    // 1. Setup real Cache with test data
+    // 1. Setup real Cache with test data (oldest first, newest last)
     let (_temp_dir, cache) =
-        create_test_cache("npm", &[("lodash", vec!["4.17.21", "4.17.20", "4.17.19"])]);
+        create_test_cache("npm", &[("lodash", vec!["4.17.19", "4.17.20", "4.17.21"])]);
 
     // 2. Setup mock Registry
     let registry = MockRegistry::new(RegistryType::Npm)
-        .with_versions("lodash", vec!["4.17.21", "4.17.20", "4.17.19"]);
+        .with_versions("lodash", vec!["4.17.19", "4.17.20", "4.17.21"]);
 
     let registries: HashMap<RegistryType, Arc<dyn Registry>> =
         HashMap::from([(RegistryType::Npm, Arc::new(registry) as _)]);
@@ -517,12 +517,12 @@ async fn e2e_package_json_publishes_outdated_version_warning() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_package_json_no_diagnostics_for_latest_version() {
-    // 1. Setup real Cache with test data
-    let (_temp_dir, cache) = create_test_cache("npm", &[("lodash", vec!["4.17.21", "4.17.20"])]);
+    // 1. Setup real Cache with test data (oldest first, newest last)
+    let (_temp_dir, cache) = create_test_cache("npm", &[("lodash", vec!["4.17.20", "4.17.21"])]);
 
     // 2. Setup mock Registry
     let registry =
-        MockRegistry::new(RegistryType::Npm).with_versions("lodash", vec!["4.17.21", "4.17.20"]);
+        MockRegistry::new(RegistryType::Npm).with_versions("lodash", vec!["4.17.20", "4.17.21"]);
 
     let registries: HashMap<RegistryType, Arc<dyn Registry>> =
         HashMap::from([(RegistryType::Npm, Arc::new(registry) as _)]);
@@ -568,12 +568,12 @@ async fn e2e_package_json_no_diagnostics_for_latest_version() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_package_json_publishes_error_for_nonexistent_version() {
-    // 1. Setup real Cache with test data
-    let (_temp_dir, cache) = create_test_cache("npm", &[("lodash", vec!["4.17.21", "4.17.20"])]);
+    // 1. Setup real Cache with test data (oldest first, newest last)
+    let (_temp_dir, cache) = create_test_cache("npm", &[("lodash", vec!["4.17.20", "4.17.21"])]);
 
     // 2. Setup mock Registry
     let registry =
-        MockRegistry::new(RegistryType::Npm).with_versions("lodash", vec!["4.17.21", "4.17.20"]);
+        MockRegistry::new(RegistryType::Npm).with_versions("lodash", vec!["4.17.20", "4.17.21"]);
 
     let registries: HashMap<RegistryType, Arc<dyn Registry>> =
         HashMap::from([(RegistryType::Npm, Arc::new(registry) as _)]);
@@ -627,13 +627,14 @@ async fn e2e_package_json_publishes_error_for_nonexistent_version() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_package_json_caret_range_is_latest_when_satisfied() {
-    // 1. Setup real Cache with test data (caret range ^4.17.0 satisfies 4.17.21)
+    // 1. Setup real Cache with test data (oldest first, newest last)
+    // caret range ^4.17.0 satisfies latest 4.17.21
     let (_temp_dir, cache) =
-        create_test_cache("npm", &[("lodash", vec!["4.17.21", "4.17.20", "4.17.0"])]);
+        create_test_cache("npm", &[("lodash", vec!["4.17.0", "4.17.20", "4.17.21"])]);
 
     // 2. Setup mock Registry
     let registry = MockRegistry::new(RegistryType::Npm)
-        .with_versions("lodash", vec!["4.17.21", "4.17.20", "4.17.0"]);
+        .with_versions("lodash", vec!["4.17.0", "4.17.20", "4.17.21"]);
 
     let registries: HashMap<RegistryType, Arc<dyn Registry>> =
         HashMap::from([(RegistryType::Npm, Arc::new(registry) as _)]);
