@@ -33,19 +33,13 @@ pub fn generate_diagnostics<S: VersionStorer>(
 /// Returns None if no diagnostic should be shown (e.g., NotInCache)
 fn create_diagnostic(package: &PackageInfo, result: &VersionCompareResult) -> Option<Diagnostic> {
     let (severity, message) = match result.status {
-        VersionStatus::NotInCache | VersionStatus::Latest => return None,
+        // No diagnostic for: not cached, latest version, or newer than latest
+        // Newer: version exists but is newer than dist-tags.latest (valid scenario)
+        VersionStatus::NotInCache | VersionStatus::Latest | VersionStatus::Newer => return None,
         VersionStatus::Outdated => (
             DiagnosticSeverity::WARNING,
             format!(
                 "Update available: {} -> {}",
-                result.current_version,
-                result.latest_version.as_deref().unwrap_or("unknown")
-            ),
-        ),
-        VersionStatus::Newer => (
-            DiagnosticSeverity::ERROR,
-            format!(
-                "Version {} does not exist (latest: {})",
                 result.current_version,
                 result.latest_version.as_deref().unwrap_or("unknown")
             ),
@@ -108,12 +102,6 @@ mod tests {
         true,
         DiagnosticSeverity::WARNING,
         "Update available: 3.0.0 -> 4.0.0"
-    )]
-    #[case(
-        "5.0.0",
-        true,
-        DiagnosticSeverity::ERROR,
-        "Version 5.0.0 does not exist (latest: 4.0.0)"
     )]
     #[case(
         "9.9.9",
@@ -206,6 +194,32 @@ mod tests {
 
         let diagnostics = generate_diagnostics(&parser, &matcher, &storer, "content");
 
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn generate_diagnostics_skips_version_newer_than_latest() {
+        // When a version exists but is newer than the "latest" dist-tag
+        // (e.g., ag-grid 33.0.3 exists but dist-tags.latest is 32.3.9)
+        // we should NOT show any diagnostic
+        let mut parser = MockParser::new();
+        parser
+            .expect_parse()
+            .returning(|_| Ok(vec![make_package_info("actions/checkout", "5.0.0", 5, 14)]));
+
+        let mut storer = MockVersionStorer::new();
+        storer
+            .expect_get_latest_version()
+            .returning(|_, _| Ok(Some("4.0.0".to_string())));
+        storer.expect_get_dist_tag().returning(|_, _, _| Ok(None));
+        storer
+            .expect_get_versions()
+            .returning(|_, _| Ok(vec!["5.0.0".to_string(), "4.0.0".to_string()]));
+        let matcher = GitHubActionsMatcher;
+
+        let diagnostics = generate_diagnostics(&parser, &matcher, &storer, "content");
+
+        // Version 5.0.0 exists and is newer than latest (4.0.0) - no diagnostic
         assert!(diagnostics.is_empty());
     }
 
