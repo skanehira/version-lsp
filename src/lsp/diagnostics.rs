@@ -150,6 +150,7 @@ mod tests {
         storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
+        storer.expect_get_dist_tag().returning(|_, _, _| Ok(None)); // GitHub Actions don't have dist-tags
         storer.expect_get_versions().returning(move |_, _| {
             if exists {
                 // Return versions that include the current version for existence check
@@ -179,6 +180,7 @@ mod tests {
         storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
+        storer.expect_get_dist_tag().returning(|_, _, _| Ok(None));
         storer
             .expect_get_versions()
             .returning(|_, _| Ok(vec!["4.0.0".to_string()]));
@@ -227,6 +229,7 @@ mod tests {
         storer
             .expect_get_latest_version()
             .returning(|_, _| Ok(Some("4.0.0".to_string())));
+        storer.expect_get_dist_tag().returning(|_, _, _| Ok(None));
         storer
             .expect_get_versions()
             .returning(|_, _| Ok(vec!["3.0.0".to_string(), "4.0.0".to_string()]));
