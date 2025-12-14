@@ -27,6 +27,9 @@ serde_json = "1.0"
 # Version management
 semver = "1.0"
 
+# Date/Time
+chrono = "0.4"
+
 # Database
 rusqlite = { version = "0.37", features = ["bundled"] }
 
