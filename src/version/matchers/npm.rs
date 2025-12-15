@@ -11,7 +11,7 @@ use semver::Version;
 
 use crate::parser::types::RegistryType;
 use crate::version::matcher::VersionMatcher;
-use crate::version::semver::CompareResult;
+use crate::version::semver::{CompareResult, parse_version};
 
 pub struct NpmVersionMatcher;
 
@@ -180,23 +180,23 @@ impl VersionRange {
         }
 
         if let Some(rest) = spec.strip_prefix(">=") {
-            Version::parse(rest.trim()).ok().map(VersionRange::Gte)
+            parse_version(rest.trim()).map(VersionRange::Gte)
         } else if let Some(rest) = spec.strip_prefix('>') {
-            Version::parse(rest.trim()).ok().map(VersionRange::Gt)
+            parse_version(rest.trim()).map(VersionRange::Gt)
         } else if let Some(rest) = spec.strip_prefix("<=") {
-            Version::parse(rest.trim()).ok().map(VersionRange::Lte)
+            parse_version(rest.trim()).map(VersionRange::Lte)
         } else if let Some(rest) = spec.strip_prefix('<') {
-            Version::parse(rest.trim()).ok().map(VersionRange::Lt)
+            parse_version(rest.trim()).map(VersionRange::Lt)
         } else if let Some(rest) = spec.strip_prefix('^') {
-            Version::parse(rest.trim()).ok().map(VersionRange::Caret)
+            parse_version(rest.trim()).map(VersionRange::Caret)
         } else if let Some(rest) = spec.strip_prefix('~') {
-            Version::parse(rest.trim()).ok().map(VersionRange::Tilde)
+            parse_version(rest.trim()).map(VersionRange::Tilde)
         } else if spec == "*" {
             Some(VersionRange::Any)
         } else if let Some(range) = Self::parse_wildcard(spec) {
             Some(range)
         } else {
-            Version::parse(spec).ok().map(VersionRange::Exact)
+            parse_version(spec).map(VersionRange::Exact)
         }
     }
 
@@ -208,8 +208,8 @@ impl VersionRange {
             return None;
         }
 
-        let from = Version::parse(parts[0].trim()).ok()?;
-        let to = Version::parse(parts[1].trim()).ok()?;
+        let from = parse_version(parts[0].trim())?;
+        let to = parse_version(parts[1].trim())?;
 
         Some(VersionRange::Hyphen { from, to })
     }
@@ -519,8 +519,42 @@ mod tests {
         );
     }
 
+    // version_exists tests - partial versions (normalized)
+    #[rstest]
+    // 0.14 should be treated as exact 0.14.0 in npm
+    #[case("0.14", vec!["0.14.0"], true)]
+    #[case("0.14", vec!["0.14.1"], false)]
+    // 1 should be treated as exact 1.0.0
+    #[case("1", vec!["1.0.0"], true)]
+    #[case("1", vec!["1.0.1"], false)]
+    // ^0.14 should be treated as ^0.14.0
+    #[case("^0.14", vec!["0.14.0", "0.14.5"], true)]
+    #[case("^0.14", vec!["0.15.0"], false)]
+    // ~1.2 should be treated as ~1.2.0
+    #[case("~1.2", vec!["1.2.0", "1.2.9"], true)]
+    #[case("~1.2", vec!["1.3.0"], false)]
+    // >=1.2 should be treated as >=1.2.0
+    #[case(">=1.2", vec!["1.2.0", "2.0.0"], true)]
+    #[case(">=1.2", vec!["1.1.9"], false)]
+    fn version_exists_partial_versions(
+        #[case] version_spec: &str,
+        #[case] available: Vec<&str>,
+        #[case] expected: bool,
+    ) {
+        let available: Vec<String> = available.into_iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            NpmVersionMatcher.version_exists(version_spec, &available),
+            expected
+        );
+    }
+
     // compare_to_latest tests
     #[rstest]
+    // Partial version comparison
+    #[case("0.14", "0.14.0", CompareResult::Latest)]
+    #[case("0.14", "0.15.0", CompareResult::Outdated)]
+    #[case("1", "1.0.0", CompareResult::Latest)]
+    #[case("1", "2.0.0", CompareResult::Outdated)]
     // Exact version comparison
     #[case("1.0.0", "1.0.0", CompareResult::Latest)]
     #[case("1.0.0", "2.0.0", CompareResult::Outdated)]

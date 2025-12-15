@@ -11,7 +11,7 @@ use semver::Version;
 
 use crate::parser::types::RegistryType;
 use crate::version::matcher::VersionMatcher;
-use crate::version::semver::CompareResult;
+use crate::version::semver::{CompareResult, parse_version};
 
 pub struct CratesVersionMatcher;
 
@@ -46,36 +46,26 @@ impl VersionRequirement {
         let spec = spec.trim();
 
         if let Some(rest) = spec.strip_prefix(">=") {
-            Version::parse(rest.trim())
-                .ok()
-                .map(VersionRequirement::Gte)
+            parse_version(rest.trim()).map(VersionRequirement::Gte)
         } else if let Some(rest) = spec.strip_prefix('>') {
-            Version::parse(rest.trim()).ok().map(VersionRequirement::Gt)
+            parse_version(rest.trim()).map(VersionRequirement::Gt)
         } else if let Some(rest) = spec.strip_prefix("<=") {
-            Version::parse(rest.trim())
-                .ok()
-                .map(VersionRequirement::Lte)
+            parse_version(rest.trim()).map(VersionRequirement::Lte)
         } else if let Some(rest) = spec.strip_prefix('<') {
-            Version::parse(rest.trim()).ok().map(VersionRequirement::Lt)
+            parse_version(rest.trim()).map(VersionRequirement::Lt)
         } else if let Some(rest) = spec.strip_prefix('=') {
-            Version::parse(rest.trim())
-                .ok()
-                .map(VersionRequirement::Exact)
+            parse_version(rest.trim()).map(VersionRequirement::Exact)
         } else if let Some(rest) = spec.strip_prefix('^') {
-            Version::parse(rest.trim())
-                .ok()
-                .map(VersionRequirement::Caret)
+            parse_version(rest.trim()).map(VersionRequirement::Caret)
         } else if let Some(rest) = spec.strip_prefix('~') {
-            Version::parse(rest.trim())
-                .ok()
-                .map(VersionRequirement::Tilde)
+            parse_version(rest.trim()).map(VersionRequirement::Tilde)
         } else if spec == "*" {
             Some(VersionRequirement::Any)
         } else if let Some(req) = Self::parse_wildcard(spec) {
             Some(req)
         } else {
             // Default (no prefix) behaves like caret in Cargo
-            Version::parse(spec).ok().map(VersionRequirement::Caret)
+            parse_version(spec).map(VersionRequirement::Caret)
         }
     }
 
@@ -364,8 +354,42 @@ mod tests {
         );
     }
 
+    // version_exists tests - partial versions (normalized)
+    #[rstest]
+    // 0.14 should be treated as 0.14.0 (caret: >=0.14.0 <0.15.0)
+    #[case("0.14", vec!["0.14.0", "0.14.5"], true)]
+    #[case("0.14", vec!["0.15.0"], false)]
+    // 1 should be treated as 1.0.0 (caret: >=1.0.0 <2.0.0)
+    #[case("1", vec!["1.0.0", "1.5.0"], true)]
+    #[case("1", vec!["2.0.0"], false)]
+    // ^0.14 should be treated as ^0.14.0
+    #[case("^0.14", vec!["0.14.0", "0.14.5"], true)]
+    #[case("^0.14", vec!["0.15.0"], false)]
+    // ~1.2 should be treated as ~1.2.0
+    #[case("~1.2", vec!["1.2.0", "1.2.9"], true)]
+    #[case("~1.2", vec!["1.3.0"], false)]
+    // >=1.2 should be treated as >=1.2.0
+    #[case(">=1.2", vec!["1.2.0", "2.0.0"], true)]
+    #[case(">=1.2", vec!["1.1.9"], false)]
+    fn version_exists_partial_versions(
+        #[case] version_spec: &str,
+        #[case] available: Vec<&str>,
+        #[case] expected: bool,
+    ) {
+        let available: Vec<String> = available.into_iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            CratesVersionMatcher.version_exists(version_spec, &available),
+            expected
+        );
+    }
+
     // compare_to_latest tests
     #[rstest]
+    // Partial version comparison
+    #[case("0.14", "0.14.5", CompareResult::Latest)]
+    #[case("0.14", "0.15.0", CompareResult::Outdated)]
+    #[case("1", "1.9.9", CompareResult::Latest)]
+    #[case("1", "2.0.0", CompareResult::Outdated)]
     // Default requirements
     #[case("1.0.0", "1.9.9", CompareResult::Latest)]
     #[case("1.0.0", "2.0.0", CompareResult::Outdated)]
