@@ -547,7 +547,7 @@ npm の範囲指定 (`^1.0.0`, `~1.0.0`) と GitHub Actions の部分マッチ�
 
 #### 13.0 Go Modulesバージョン仕様の調査
 
-- [ ] [RESEARCH] Go Modulesのバージョン仕様を調査
+- [x] [RESEARCH] Go Modulesのバージョン仕様を調査
   - 公式ドキュメント: https://go.dev/ref/mod
   - バージョン形式を把握:
     - Semantic versioning: `v1.2.3`
@@ -562,14 +562,14 @@ npm の範囲指定 (`^1.0.0`, `~1.0.0`) と GitHub Actions の部分マッチ�
 
 #### 13.1 go.modパーサーの実装
 
-- [ ] [RED] go.modパーサーのテスト作成 (`src/parser/go_mod.rs`内の`#[cfg(test)]`)
+- [x] [RED] go.modパーサーのテスト作成 (`src/parser/go_mod.rs`内の`#[cfg(test)]`)
   - `require`ディレクティブを抽出できることを確認
 
-- [ ] [GREEN] go.modパーサーの実装 (`src/parser/go_mod.rs`)
-  - tree-sitter-goを使用
+- [x] [GREEN] go.modパーサーの実装 (`src/parser/go_mod.rs`)
+  - regexを使用（tree-sitter-gomodはバージョン非互換のため）
   - `require`ディレクティブの抽出
 
-- [ ] [REFACTOR] バージョン形式の対応
+- [x] [REFACTOR] バージョン形式の対応
   - `v1.2.3`
   - `v1.2.3+incompatible`
   - pseudo-versionsの対応
@@ -580,42 +580,42 @@ npm の範囲指定 (`^1.0.0`, `~1.0.0`) と GitHub Actions の部分マッチ�
 
 #### 14.1 Go proxy APIの実装
 
-- [ ] [RED] Go proxy APIのテスト作成 (`src/version/registries/go_proxy.rs`内の`#[cfg(test)]`)
+- [x] [RED] Go proxy APIのテスト作成 (`src/version/registries/go_proxy.rs`内の`#[cfg(test)]`)
   - モックAPIサーバーでテスト
   - `fetch_all_versions()`で全バージョンを取得できることを確認
 
-- [ ] [GREEN] Go proxy APIの実装 (`src/version/registries/go_proxy.rs`)
+- [x] [GREEN] Go proxy APIの実装 (`src/version/registries/go_proxy.rs`)
   - reqwestでGo proxy (`https://proxy.golang.org/{module}/@v/list`)を呼び出し
   - バージョンリストを取得
 
-- [ ] [REFACTOR] エラーハンドリング
+- [x] [REFACTOR] エラーハンドリング
   - 存在しないモジュール（404/410）
 
 #### 14.2 GoVersionMatcher 実装
 
-- [ ] [RED] GoVersionMatcher のテスト作成 (`src/version/matchers/go.rs`内の`#[cfg(test)]`)
+- [x] [RED] GoVersionMatcher のテスト作成 (`src/version/matchers/go.rs`内の`#[cfg(test)]`)
   - Goのsemverバージョンテスト (`v1.0.0`, `v1.0.0+incompatible`)
   - pseudo-versionsのテスト
 
-- [ ] [GREEN] GoVersionMatcher の実装 (`src/version/matchers/go.rs`)
+- [x] [GREEN] GoVersionMatcher の実装 (`src/version/matchers/go.rs`)
   - Goのバージョン形式パース
   - `VersionMatcher` トレイトを実装
 
-- [ ] [REFACTOR] エッジケースの対応
+- [x] [REFACTOR] エッジケースの対応
   - pseudo-versionsの比較
 
 #### 14.3 go.mod統合とE2Eテスト
 
-- [ ] [RED] E2Eテスト作成 (`tests/lsp_e2e_test.rs`)
+- [x] [RED] E2Eテスト作成 (`tests/lsp_e2e_test.rs`)
   - go.modのdidOpen時にdiagnosticsが発行されることを確認
   - 古いバージョン、存在しないバージョンのケース
 
-- [ ] [GREEN] Backend統合
+- [x] [GREEN] Backend統合
   - `initialize_parsers()`に`GoModParser`を追加
   - `initialize_registries()`に`GoProxyRegistry`を追加
   - `initialize_matchers()`に`GoVersionMatcher`を追加
 
-- [ ] [REFACTOR] 動作確認
+- [x] [REFACTOR] 動作確認
   - go.mod に対する動作確認
   - 全テスト通過確認
 

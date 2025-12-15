@@ -11,15 +11,19 @@ use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::refresh::{fetch_missing_packages, refresh_packages};
 use crate::parser::cargo_toml::CargoTomlParser;
 use crate::parser::github_actions::GitHubActionsParser;
+use crate::parser::go_mod::GoModParser;
 use crate::parser::package_json::PackageJsonParser;
 use crate::parser::traits::Parser;
 use crate::parser::types::{RegistryType, detect_parser_type};
 use crate::version::cache::Cache;
 use crate::version::checker::VersionStorer;
 use crate::version::matcher::VersionMatcher;
-use crate::version::matchers::{CratesVersionMatcher, GitHubActionsMatcher, NpmVersionMatcher};
+use crate::version::matchers::{
+    CratesVersionMatcher, GitHubActionsMatcher, GoVersionMatcher, NpmVersionMatcher,
+};
 use crate::version::registries::crates_io::CratesIoRegistry;
 use crate::version::registries::github::GitHubRegistry;
+use crate::version::registries::go_proxy::GoProxyRegistry;
 use crate::version::registries::npm::NpmRegistry;
 use crate::version::registry::Registry;
 
@@ -93,6 +97,7 @@ impl<S: VersionStorer> Backend<S> {
         );
         parsers.insert(RegistryType::Npm, Arc::new(PackageJsonParser::new()));
         parsers.insert(RegistryType::CratesIo, Arc::new(CargoTomlParser::new()));
+        parsers.insert(RegistryType::GoProxy, Arc::new(GoModParser::new()));
         parsers
     }
 
@@ -101,6 +106,7 @@ impl<S: VersionStorer> Backend<S> {
         matchers.insert(RegistryType::GitHubActions, Arc::new(GitHubActionsMatcher));
         matchers.insert(RegistryType::Npm, Arc::new(NpmVersionMatcher));
         matchers.insert(RegistryType::CratesIo, Arc::new(CratesVersionMatcher));
+        matchers.insert(RegistryType::GoProxy, Arc::new(GoVersionMatcher));
         matchers
     }
 
@@ -115,6 +121,7 @@ impl<S: VersionStorer> Backend<S> {
             RegistryType::CratesIo,
             Arc::new(CratesIoRegistry::default()),
         );
+        registries.insert(RegistryType::GoProxy, Arc::new(GoProxyRegistry::default()));
         registries
     }
 
