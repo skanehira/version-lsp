@@ -468,11 +468,11 @@ npm の範囲指定 (`^1.0.0`, `~1.0.0`) と GitHub Actions の部分マッチ�
 
 ---
 
-### Phase 11: Cargo.tomlパーサー
+### Phase 11: Cargo.tomlパーサー ✅
 
 #### 11.0 Cargo.tomlバージョン仕様の調査
 
-- [ ] [RESEARCH] Cargoのバージョン要件仕様を調査
+- [x] [RESEARCH] Cargoのバージョン要件仕様を調査
   - 公式ドキュメント: https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html
   - バージョン要件の種類を把握:
     - Caret requirements: `^1.2.3` (デフォルト、npmと同様だが微妙に異なる)
@@ -485,14 +485,14 @@ npm の範囲指定 (`^1.0.0`, `~1.0.0`) と GitHub Actions の部分マッチ�
 
 #### 11.1 Cargo.tomlパーサーの実装
 
-- [ ] [RED] Cargo.tomlパーサーのテスト作成 (`src/parser/cargo_toml.rs`内の`#[cfg(test)]`)
+- [x] [RED] Cargo.tomlパーサーのテスト作成 (`src/parser/cargo_toml.rs`内の`#[cfg(test)]`)
   - `[dependencies]`、`[dev-dependencies]`を抽出できることを確認
 
-- [ ] [GREEN] Cargo.tomlパーサーの実装 (`src/parser/cargo_toml.rs`)
-  - tree-sitter-tomlを使用
+- [x] [GREEN] Cargo.tomlパーサーの実装 (`src/parser/cargo_toml.rs`)
+  - tree-sitter-toml-ngを使用
   - `[dependencies]`、`[dev-dependencies]`、`[build-dependencies]`の抽出
 
-- [ ] [REFACTOR] バージョン指定の対応
+- [x] [REFACTOR] バージョン指定の対応
   - `version = "1.0"`
   - `{ version = "1.0", features = ["..."] }`
 
