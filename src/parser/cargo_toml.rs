@@ -44,8 +44,12 @@ impl Parser for CargoTomlParser {
 
 impl CargoTomlParser {
     /// Dependency table names to extract
-    const DEPENDENCY_TABLES: [&'static str; 3] =
-        ["dependencies", "dev-dependencies", "build-dependencies"];
+    const DEPENDENCY_TABLES: [&'static str; 4] = [
+        "dependencies",
+        "dev-dependencies",
+        "build-dependencies",
+        "workspace.dependencies",
+    ];
 
     /// Extract dependencies from all dependency tables
     fn extract_dependencies(
@@ -520,5 +524,23 @@ serde.features = ["derive"]
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "serde");
         assert_eq!(result[0].version, "1.0");
+    }
+
+    #[test]
+    fn parse_extracts_workspace_dependencies() {
+        let parser = CargoTomlParser::new();
+        let content = r#"[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
+prost = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "prost");
+        assert_eq!(result[0].version, "0.13");
+        assert_eq!(result[1].name, "serde");
+        assert_eq!(result[1].version, "1.0");
     }
 }

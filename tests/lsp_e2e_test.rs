@@ -931,3 +931,67 @@ serde = "1.0.0"
         serde_json::from_value(notification.params().unwrap().clone()).unwrap();
     assert!(params.diagnostics.is_empty());
 }
+
+/// Test [workspace.dependencies] format
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_cargo_toml_workspace_dependencies_outdated_warning() {
+    // 1. Setup real Cache with test data
+    let (_temp_dir, cache) = create_test_cache(
+        RegistryType::CratesIo,
+        &[("prost", vec!["0.12.0", "0.13.0", "0.14.0", "0.14.1"])],
+    );
+
+    // 2. Setup mock Registry
+    let registry = MockRegistry::new(RegistryType::CratesIo)
+        .with_versions("prost", vec!["0.12.0", "0.13.0", "0.14.0", "0.14.1"]);
+
+    let registries: HashMap<RegistryType, Arc<dyn Registry>> =
+        HashMap::from([(RegistryType::CratesIo, Arc::new(registry) as _)]);
+
+    // 3. Create LspService
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), registries)).finish();
+
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    // 4. Initialize
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+
+    // 5. didOpen with workspace.dependencies format
+    // "0.13" means ^0.13.0, which does NOT satisfy 0.14.1 (0.x caret semantics)
+    let cargo_toml = r#"[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
+prost = "0.13"
+"#;
+
+    service
+        .call(create_did_open_notification(
+            "file:///test/Cargo.toml",
+            cargo_toml,
+        ))
+        .await
+        .unwrap();
+
+    // 6. Receive publishDiagnostics notification - should have WARNING
+    let notification =
+        wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+            .await
+            .expect("Expected publishDiagnostics notification");
+    let params: PublishDiagnosticsParams =
+        serde_json::from_value(notification.params().unwrap().clone()).unwrap();
+    assert_eq!(params.diagnostics.len(), 1);
+    assert_eq!(
+        params.diagnostics[0].severity,
+        Some(DiagnosticSeverity::WARNING)
+    );
+    assert_eq!(
+        params.diagnostics[0].message,
+        "Update available: 0.13 -> 0.14.1"
+    );
+}
