@@ -7,12 +7,96 @@ on:
   workflow_dispatch:
 
 permissions:
-  # for goreleaser
   contents: write
 
 jobs:
+  build:
+    name: Build - ${{ matrix.target }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            os: Linux
+            arch: x86_64
+            ext: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            os: Linux
+            arch: arm64
+            ext: tar.gz
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            os: Darwin
+            arch: x86_64
+            ext: tar.gz
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: Darwin
+            arch: arm64
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            os: Windows
+            arch: x86_64
+            ext: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+      - name: Setup environment variables for sccache
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          rustflags: ""
+
+      - name: Get project name
+        id: project
+        shell: bash
+        run: |
+          name=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[0].name')
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Create archive (Unix)
+        if: matrix.os != 'Windows'
+        shell: bash
+        run: |
+          name="${{ steps.project.outputs.name }}"
+          archive_name="${name}_${{ matrix.os }}_${{ matrix.arch }}.tar.gz"
+          tar -czvf "$archive_name" -C target/release "$name"
+          echo "archive_name=$archive_name" >> "$GITHUB_ENV"
+
+      - name: Create archive (Windows)
+        if: matrix.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "${{ steps.project.outputs.name }}"
+          $archiveName = "${name}_${{ matrix.os }}_${{ matrix.arch }}.zip"
+          Compress-Archive -Path "target/release/${name}.exe" -DestinationPath $archiveName
+          echo "archive_name=$archiveName" >> $env:GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ steps.project.outputs.name }}_${{ matrix.os }}_${{ matrix.arch }}
+          path: ${{ env.archive_name }}
+          if-no-files-found: error
+
   release:
     name: Release
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,37 +104,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: (setup) sccache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      
-      - name: (setup) environment variables for sccache
-        shell: bash
+      - name: Download all artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate changelog
+        id: changelog
         run: |
-          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          # Get the previous tag
+          prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
-        with:
-          cache-shared-key: setup-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
-          target: "x86_64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-gnu, aarch64-unknown-linux-gnu, aarch64-apple-darwin"
-          rustflags: "" # override default rustflags
+          if [ -n "$prev_tag" ]; then
+            echo "## Changes since $prev_tag" > changelog.md
+            echo "" >> changelog.md
+            git log --pretty=format:"- %s" "$prev_tag"..HEAD >> changelog.md
+          else
+            echo "## Initial Release" > changelog.md
+          fi
 
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
-        with:
-          cache: true
-
-      - name: Install zig
-        uses: mlugg/setup-zig@fa65c4058643678a4e4a9a60513944a7d8d35440 # v2.1.0
-
-      - name: Install cargo-zigbuild
-        run: |
-          cargo install cargo-zigbuild
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
+      - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file changelog.md \
+            artifacts/*
