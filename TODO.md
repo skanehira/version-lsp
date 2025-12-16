@@ -21,9 +21,10 @@
 
 ## Medium
 
-- [ ] 4. バッチデータベース操作の追加
-  - 場所: `src/version/checker.rs`
-  - 問題: `VersionStorer` trait にバッチメソッドがない
+- [x] 4. バージョン保存の差分更新
+  - 場所: `src/version/cache.rs`
+  - 問題: `replace_versions()` が全削除→全挿入で非効率（2000バージョン以上のパッケージで問題）
+  - 対応: `INSERT OR IGNORE` で新しいバージョンのみ追加する方式に変更
 
 - [ ] 5. パース失敗時のログ出力
   - 場所: `src/lsp/backend.rs:214, 260`

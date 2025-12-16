@@ -344,13 +344,11 @@ impl VersionStorer for Cache {
             |row| row.get(0),
         )?;
 
-        // Delete existing versions
-        tx.execute("DELETE FROM versions WHERE package_id = ?1", [package_id])?;
-
-        // Insert new versions
+        // Insert only new versions (skip existing ones)
+        // Using INSERT OR IGNORE with UNIQUE constraint on (package_id, version)
         {
             let mut stmt =
-                tx.prepare("INSERT INTO versions (package_id, version) VALUES (?1, ?2)")?;
+                tx.prepare("INSERT OR IGNORE INTO versions (package_id, version) VALUES (?1, ?2)")?;
             for version in &versions {
                 stmt.execute((package_id, version))?;
             }
@@ -559,6 +557,43 @@ mod tests {
 
         let saved = cache.get_versions("npm", "axios").unwrap();
         assert_eq!(saved, new_versions);
+    }
+
+    #[test]
+    fn replace_versions_adds_only_new_versions() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400).unwrap();
+
+        // Initial versions
+        let initial_versions = vec!["1.0.0".to_string(), "1.1.0".to_string()];
+        cache
+            .replace_versions(RegistryType::Npm, "axios", initial_versions)
+            .unwrap();
+
+        // Add mix of existing and new versions
+        let updated_versions = vec![
+            "1.0.0".to_string(), // existing
+            "1.1.0".to_string(), // existing
+            "1.2.0".to_string(), // new
+            "2.0.0".to_string(), // new
+        ];
+        cache
+            .replace_versions(RegistryType::Npm, "axios", updated_versions)
+            .unwrap();
+
+        // Verify all versions are present (no duplicates)
+        let mut saved = cache.get_versions("npm", "axios").unwrap();
+        saved.sort();
+        assert_eq!(
+            saved,
+            vec![
+                "1.0.0".to_string(),
+                "1.1.0".to_string(),
+                "1.2.0".to_string(),
+                "2.0.0".to_string(),
+            ]
+        );
     }
 
     #[test]
