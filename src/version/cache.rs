@@ -51,6 +51,14 @@ impl Cache {
         self.conn.lock().map_err(|_| CacheError::LockPoisoned)
     }
 
+    /// Get current timestamp in milliseconds since UNIX epoch
+    fn current_timestamp_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before UNIX epoch")
+            .as_millis() as i64
+    }
+
     fn create_schema(&self) -> Result<(), CacheError> {
         debug!("Creating database schema");
 
@@ -166,10 +174,7 @@ impl Cache {
         let tx = conn.transaction()?;
 
         // Get or create package
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before UNIX epoch")
-            .as_millis() as i64;
+        let now = Self::current_timestamp_ms();
 
         tx.execute(
             r#"
@@ -317,10 +322,7 @@ impl VersionStorer for Cache {
             package_name
         );
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before UNIX epoch")
-            .as_millis() as i64;
+        let now = Self::current_timestamp_ms();
 
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction()?;
@@ -364,11 +366,7 @@ impl VersionStorer for Cache {
     }
 
     fn get_packages_needing_refresh(&self) -> Result<Vec<PackageId>, CacheError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before UNIX epoch")
-            .as_millis() as i64;
-
+        let now = Self::current_timestamp_ms();
         let threshold = now - self.refresh_interval;
 
         let conn = self.lock_conn()?;
@@ -403,12 +401,8 @@ impl VersionStorer for Cache {
         package_name: &str,
     ) -> Result<bool, CacheError> {
         let registry_type = registry_type.as_str();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before UNIX epoch")
-            .as_millis() as i64;
-
-        let timeout_threshold = now - Cache::FETCH_TIMEOUT_MS;
+        let now = Self::current_timestamp_ms();
+        let timeout_threshold = now - Self::FETCH_TIMEOUT_MS;
 
         let conn = self.lock_conn()?;
 

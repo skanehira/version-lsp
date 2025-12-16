@@ -14,9 +14,10 @@
   - 問題: `refresh_packages()` と `fetch_missing_packages()` で約70%重複
   - 対応: `fetch_and_cache_package()` ヘルパー関数を抽出（約90行削減）
 
-- [ ] 3. 時刻計算の重複を解消
+- [x] 3. 時刻計算の重複を解消
   - 場所: `src/version/cache.rs` (4箇所)
   - 問題: `SystemTime::now().duration_since(UNIX_EPOCH)` が重複
+  - 対応: `current_timestamp_ms()` ヘルパーメソッドを追加
 
 ## Medium
 
