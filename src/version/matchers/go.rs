@@ -19,6 +19,12 @@ impl VersionMatcher for GoVersionMatcher {
     }
 
     fn version_exists(&self, version_spec: &str, available_versions: &[String]) -> bool {
+        // Pseudo-versions are commit-specific and not listed in /@v/list
+        // Skip validation for them
+        if is_pseudo_version(version_spec) {
+            return true;
+        }
+
         // Go modules use exact version matching
         // Normalize both versions for comparison
         let normalized = normalize_go_version(version_spec);
@@ -42,6 +48,38 @@ fn normalize_go_version(version: &str) -> String {
     let version = version.strip_prefix('v').unwrap_or(version);
     let version = version.strip_suffix("+incompatible").unwrap_or(version);
     version.to_string()
+}
+
+/// Check if a version is a pseudo-version.
+///
+/// Pseudo-version formats:
+/// - v0.0.0-YYYYMMDDHHMMSS-commit (no base version)
+/// - vX.Y.Z-0.YYYYMMDDHHMMSS-commit (with base version)
+fn is_pseudo_version(version: &str) -> bool {
+    let normalized = normalize_go_version(version);
+
+    let Some((_, rest)) = normalized.split_once('-') else {
+        return false;
+    };
+
+    let parts: Vec<&str> = rest.split('-').collect();
+    if parts.len() < 2 {
+        return false;
+    }
+
+    // Check for timestamp: either direct (14 digits) or prefixed with "0." (16 chars)
+    let timestamp = parts[0];
+    if timestamp.len() == 14 && timestamp.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    if timestamp.starts_with("0.") && timestamp.len() == 16 {
+        let after_prefix = &timestamp[2..];
+        if after_prefix.chars().all(|c| c.is_ascii_digit()) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Parse a Go version into semver::Version
@@ -153,9 +191,11 @@ mod tests {
     #[case("v1.0.0", &["v1.1.0", "v2.0.0"], false)]
     #[case("v2.0.0+incompatible", &["v2.0.0+incompatible", "v3.0.0"], true)]
     #[case("v2.0.0+incompatible", &["v2.0.0"], true)] // +incompatible matches without suffix
-    #[case("v2.0.0", &["v2.0.0+incompatible"], true)] // without suffix matches +incompatible
-    #[case("v0.0.0-20210101000000-abc123", &["v0.0.0-20210101000000-abc123", "v1.0.0"], true)]
-    #[case("v0.0.0-20210101000000-abc123", &["v1.0.0", "v2.0.0"], false)]
+    #[case("v2.0.0", &["v2.0.0+incompatible"], true)]
+    // without suffix matches +incompatible
+    // Pseudo-versions should always return true (skip validation)
+    #[case("v0.0.0-20210101000000-abc123", &["v1.0.0", "v2.0.0"], true)]
+    #[case("v1.1.3-0.20240916144458-20a13a1f6b7c", &["v1.0.0", "v1.1.3"], true)]
     fn version_exists_returns_expected(
         #[case] version: &str,
         #[case] available: &[&str],
@@ -171,5 +211,21 @@ mod tests {
         assert_eq!(normalize_go_version("v1.0.0"), "1.0.0");
         assert_eq!(normalize_go_version("v2.0.0+incompatible"), "2.0.0");
         assert_eq!(normalize_go_version("1.0.0"), "1.0.0");
+    }
+
+    #[rstest]
+    // Pseudo-versions without base version
+    #[case("v0.0.0-20210101000000-abc123", true)]
+    #[case("v0.0.0-20240916144458-20a13a1f6b7c", true)]
+    // Pseudo-versions with base version (0.timestamp format)
+    #[case("v1.1.3-0.20240916144458-20a13a1f6b7c", true)]
+    #[case("v2.0.0-0.20200101120000-abcdef123456", true)]
+    // Regular versions (not pseudo)
+    #[case("v1.0.0", false)]
+    #[case("v1.0.0-beta.1", false)]
+    #[case("v1.0.0-alpha", false)]
+    #[case("v2.0.0+incompatible", false)]
+    fn is_pseudo_version_returns_expected(#[case] version: &str, #[case] expected: bool) {
+        assert_eq!(is_pseudo_version(version), expected);
     }
 }

@@ -6,7 +6,7 @@
 //! Format examples:
 //! - Single: `require golang.org/x/text v0.14.0`
 //! - Block:
-//!   ```
+//!   ```text
 //!   require (
 //!       golang.org/x/text v0.14.0
 //!       golang.org/x/net v0.20.0 // indirect

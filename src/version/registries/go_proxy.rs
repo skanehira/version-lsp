@@ -4,6 +4,7 @@ use crate::parser::types::RegistryType;
 use crate::version::error::RegistryError;
 use crate::version::registry::Registry;
 use crate::version::types::PackageVersions;
+use semver::Version;
 use tracing::warn;
 
 /// Default base URL for Go proxy
@@ -72,11 +73,19 @@ impl Registry for GoProxyRegistry {
         })?;
 
         // Go proxy returns versions one per line
-        let versions: Vec<String> = body
+        // Sort by semver (oldest first, newest last)
+        let mut versions: Vec<(String, Option<Version>)> = body
             .lines()
             .filter(|line| !line.is_empty())
-            .map(|line| line.to_string())
+            .map(|line| {
+                let parsed = line.strip_prefix('v').and_then(|v| Version::parse(v).ok());
+                (line.to_string(), parsed)
+            })
             .collect();
+
+        versions.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+        let versions: Vec<String> = versions.into_iter().map(|(v, _)| v).collect();
 
         Ok(PackageVersions::new(versions))
     }
@@ -103,14 +112,15 @@ mod tests {
     use mockito::Server;
 
     #[tokio::test]
-    async fn fetch_all_versions_returns_versions_from_proxy() {
+    async fn fetch_all_versions_returns_versions_sorted_by_semver() {
         let mut server = Server::new_async().await;
 
+        // API returns versions in arbitrary order
         let mock = server
             .mock("GET", "/golang.org/x/text/@v/list")
             .with_status(200)
             .with_header("content-type", "text/plain")
-            .with_body("v0.14.0\nv0.13.0\nv0.12.0\n")
+            .with_body("v0.14.0\nv0.12.0\nv0.13.0\n")
             .create_async()
             .await;
 
@@ -121,12 +131,13 @@ mod tests {
             .unwrap();
 
         mock.assert_async().await;
+        // Should be sorted oldest to newest
         assert_eq!(
             result.versions,
             vec![
-                "v0.14.0".to_string(),
+                "v0.12.0".to_string(),
                 "v0.13.0".to_string(),
-                "v0.12.0".to_string()
+                "v0.14.0".to_string()
             ]
         );
     }
@@ -207,6 +218,41 @@ mod tests {
 
         mock.assert_async().await;
         assert_eq!(result.versions, vec!["v1.0.0".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn fetch_all_versions_sorts_real_world_arbitrary_order() {
+        let mut server = Server::new_async().await;
+
+        // Simulates real Go proxy response (arbitrary order like aws-sdk-go-v2)
+        let mock = server
+            .mock("GET", "/github.com/example/sdk/@v/list")
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("v1.26.2\nv0.28.0\nv1.39.6\nv1.41.0\nv1.16.12\nv1.16.5\n")
+            .create_async()
+            .await;
+
+        let registry = GoProxyRegistry::new(&server.url());
+        let result = registry
+            .fetch_all_versions("github.com/example/sdk")
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+        // Should be sorted by semver: oldest to newest
+        // v1.41.0 should be LAST (the latest)
+        assert_eq!(
+            result.versions,
+            vec![
+                "v0.28.0".to_string(),
+                "v1.16.5".to_string(),
+                "v1.16.12".to_string(),
+                "v1.26.2".to_string(),
+                "v1.39.6".to_string(),
+                "v1.41.0".to_string(), // Latest should be last
+            ]
+        );
     }
 
     #[test]
