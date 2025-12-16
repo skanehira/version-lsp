@@ -644,24 +644,25 @@ npm の範囲指定 (`^1.0.0`, `~1.0.0`) と GitHub Actions の部分マッチ�
 
 #### 16.1 ドキュメント整備
 
-- [ ] [STRUCTURAL] README.mdの作成
+- [x] [STRUCTURAL] README.mdの作成
   - インストール方法
-  - エディタ設定例（Neovim、VSCode）
+  - エディタ設定例（Neovim、VSCode、Helix）
   - 対応パッケージファイル一覧
+  - 設定オプション
 
-- [ ] [STRUCTURAL] API.mdの作成
+- [ ] [STRUCTURAL] API.mdの作成（必要に応じて後日）
   - プラグイン拡張API
   - 新しいパーサーの追加方法
 
 #### 16.2 CI/CDの設定
 
-- [ ] [STRUCTURAL] GitHub Actionsワークフローの作成
+- [x] [STRUCTURAL] GitHub Actionsワークフローの作成（既存）
   - clippy
   - rustfmt
   - cargo test
   - cargo build --release
 
-- [ ] [STRUCTURAL] リリースワークフローの作成
+- [x] [STRUCTURAL] リリースワークフローの作成（既存）
   - バイナリのビルド（Linux、macOS、Windows）
   - GitHub Releasesへのアップロード
 
