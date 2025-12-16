@@ -9,13 +9,15 @@ use tower_lsp::LspService;
 use tower_lsp::lsp_types::*;
 
 use helper::{
-    MockRegistry, create_did_change_notification, create_did_open_notification,
+    MockRegistry, create_did_open_notification,
     create_initialize_request, create_initialized_notification, create_test_cache,
     create_test_resolver, spawn_notification_collector, wait_for_notification,
 };
 use version_lsp::lsp::backend::Backend;
 use version_lsp::lsp::resolver::PackageResolver;
 use version_lsp::parser::types::RegistryType;
+
+use crate::helper::create_did_change_notification;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn did_open_publishes_outdated_version_warning() {

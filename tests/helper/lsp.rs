@@ -42,6 +42,7 @@ pub fn create_did_open_notification(uri: &str, content: &str) -> Request {
 }
 
 /// Create an LSP didChange notification
+#[allow(dead_code)]
 pub fn create_did_change_notification(uri: &str, content: &str, version: i32) -> Request {
     Request::build("textDocument/didChange")
         .params(
