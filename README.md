@@ -8,6 +8,17 @@
 
 A Language Server Protocol (LSP) implementation that provides version checking diagnostics for package dependency files.
 
+<table>
+  <tr>
+    <td><a href="https://gyazo.com/3c0c5fc42d0109033eb2017254135fcf"><img src="https://i.gyazo.com/3c0c5fc42d0109033eb2017254135fcf.png" alt="Image from Gyazo"></a></td>
+    <td><a href="https://gyazo.com/e34f0eebacafc65bd06761cee1ffe5de"><img src="https://i.gyazo.com/e34f0eebacafc65bd06761cee1ffe5de.png" alt="Image from Gyazo"></a></td>
+  </tr>
+  <tr>
+    <td><a href="https://gyazo.com/2458d2eb4966c9c2dea30eafcfd8ff2b"><img src="https://i.gyazo.com/2458d2eb4966c9c2dea30eafcfd8ff2b.png" alt="Image from Gyazo"></a></td>
+    <td><a href="https://gyazo.com/b81a1ac9817c31398013e01a013c6d08"><img src="https://i.gyazo.com/b81a1ac9817c31398013e01a013c6d08.png" alt="Image from Gyazo"></a></td>
+  </tr>
+</table>
+
 ## Features
 
 - Detects outdated package versions and shows update suggestions
