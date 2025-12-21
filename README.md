@@ -31,9 +31,28 @@ A Language Server Protocol (LSP) implementation that provides version checking d
 | File                                                  | Registry        |
 |-------------------------------------------------------|-----------------|
 | `package.json`                                        | npm             |
+| `pnpm-workspace.yaml`                                 | npm             |
 | `Cargo.toml`                                          | crates.io       |
 | `go.mod`                                              | Go Proxy        |
 | `.github/workflows/*.yaml`/`.github/actions/*/*.yaml` | GitHub Releases |
+
+### pnpm Catalogs
+
+Supports [pnpm catalogs](https://pnpm.io/catalogs) defined in `pnpm-workspace.yaml`:
+
+```yaml
+# Single catalog
+catalog:
+  react: ^18.2.0
+  lodash: ^4.17.21
+
+# Named catalogs
+catalogs:
+  react17:
+    react: ^17.0.2
+  react18:
+    react: ^18.2.0
+```
 
 ## Installation
 
@@ -79,6 +98,7 @@ lspconfig.version_lsp.setup({
         crates = { enabled = true },
         goProxy = { enabled = true },
         github = { enabled = true },
+        pnpmCatalog = { enabled = true },
       },
     },
   },
@@ -94,6 +114,7 @@ lspconfig.version_lsp.setup({
 | `registries.crates.enabled`  | boolean | `true`     | Enable crates.io registry checks                           |
 | `registries.goProxy.enabled` | boolean | `true`     | Enable Go Proxy registry checks                            |
 | `registries.github.enabled`  | boolean | `true`     | Enable GitHub Releases checks                              |
+| `registries.pnpmCatalog.enabled` | boolean | `true` | Enable pnpm catalog checks                                 |
 
 ## Data Storage
 
