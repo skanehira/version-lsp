@@ -484,9 +484,238 @@ if config.new_option.enabled {
 
 ---
 
+## JSR (JavaScript Registry) Support
+
+### Overview
+
+JSR is the modern JavaScript registry created by Deno, designed for TypeScript-first packages.
+This section describes the design for adding JSR support to version-lsp.
+
+### File Format: deno.json
+
+```json
+{
+  "imports": {
+    "@luca/flag": "jsr:@luca/flag@^1.0.1",
+    "@std/path": "jsr:@std/path@1.0.0"
+  }
+}
+```
+
+**Characteristics:**
+- JSON format (can reuse tree-sitter JSON parser)
+- Dependencies in `imports` field
+- Format: `"jsr:@scope/package@version"`
+- Version follows npm semver specification (^, ~, exact, etc.)
+
+### JSR Registry API
+
+**Endpoint:**
+```
+https://jsr.io/@{scope}/{package}/meta.json
+```
+
+**Example:**
+```
+https://jsr.io/@luca/flag/meta.json
+```
+
+**Response:**
+```json
+{
+  "scope": "luca",
+  "name": "flag",
+  "latest": "1.0.1",
+  "versions": {
+    "1.0.0": {},
+    "1.0.1": {}
+  }
+}
+```
+
+**Important Headers:**
+- `Accept` header must NOT include `text/html`
+- Recommended: `Accept: application/json`
+
+### Design Decisions
+
+#### Why Reuse NpmVersionMatcher?
+
+JSR uses the same semver specification as npm:
+- Caret (^): `^1.2.3` → `>=1.2.3 <2.0.0`
+- Tilde (~): `~1.2.3` → `>=1.2.3 <1.3.0`
+- Exact: `1.2.3`
+- Comparison: `>=`, `>`, `<=`, `<`
+
+**Decision:** Create `JsrVersionMatcher` that delegates to existing npm semver logic.
+
+```rust
+pub struct JsrVersionMatcher;
+
+impl VersionMatcher for JsrVersionMatcher {
+    fn registry_type(&self) -> RegistryType {
+        RegistryType::Jsr
+    }
+
+    fn version_exists(&self, version_spec: &str, available: &[String]) -> bool {
+        // Reuse npm version matching logic
+        npm_version_exists(version_spec, available)
+    }
+
+    fn compare_to_latest(&self, current: &str, latest: &str) -> CompareResult {
+        npm_compare_to_latest(current, latest)
+    }
+}
+```
+
+#### Parser Implementation
+
+**Parsing Strategy:**
+1. Use tree-sitter JSON parser (same as package.json)
+2. Extract `imports` field
+3. Filter entries with `jsr:` prefix
+4. Parse format: `jsr:@scope/package@version`
+
+**Version Extraction:**
+```rust
+// Input: "jsr:@luca/flag@^1.0.1"
+// Output: PackageInfo { name: "@luca/flag", version: "^1.0.1", ... }
+fn parse_jsr_specifier(value: &str) -> Option<(String, String)> {
+    let rest = value.strip_prefix("jsr:")?;
+    // @scope/package@version format
+    // Find the @ that separates package from version (after the scope's @)
+    let slash_pos = rest.find('/')?;
+    let after_slash = &rest[slash_pos + 1..];
+    if let Some(at_pos) = after_slash.find('@') {
+        let package_name = &rest[..slash_pos + 1 + at_pos];
+        let version = &after_slash[at_pos + 1..];
+        Some((package_name.to_string(), version.to_string()))
+    } else {
+        // No version specified
+        Some((rest.to_string(), "latest".to_string()))
+    }
+}
+```
+
+#### Registry Implementation
+
+**Response Structure:**
+```json
+{
+  "scope": "std",
+  "name": "path",
+  "latest": "1.1.3",
+  "versions": {
+    "1.0.0": { "createdAt": "2024-01-01T00:00:00.000Z" },
+    "1.0.1": { "createdAt": "2024-02-01T00:00:00.000Z", "yanked": true },
+    "1.1.0": { "createdAt": "2024-03-01T00:00:00.000Z" }
+  }
+}
+```
+
+**Implementation:**
+```rust
+pub struct JsrRegistry {
+    client: reqwest::Client,
+    base_url: String,  // Default: "https://jsr.io"
+}
+
+#[derive(Deserialize)]
+struct JsrMetaResponse {
+    latest: Option<String>,
+    versions: HashMap<String, JsrVersionMeta>,
+}
+
+#[derive(Deserialize)]
+struct JsrVersionMeta {
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    #[serde(default)]
+    yanked: bool,
+}
+
+impl Registry for JsrRegistry {
+    async fn fetch_all_versions(&self, package_name: &str) -> Result<PackageVersions, RegistryError> {
+        // package_name: "@luca/flag"
+        // URL: https://jsr.io/@luca/flag/meta.json
+        let url = format!("{}/{}/meta.json", self.base_url, package_name);
+
+        let response = self.client
+            .get(&url)
+            .header("Accept", "application/json")
+            .send()
+            .await?;
+
+        let meta: JsrMetaResponse = response.json().await?;
+
+        // Filter out yanked versions and sort by createdAt (oldest first)
+        let mut versions: Vec<(String, Option<DateTime<Utc>>)> = meta.versions
+            .into_iter()
+            .filter(|(_, meta)| !meta.yanked)
+            .map(|(v, meta)| {
+                let timestamp = meta.created_at
+                    .and_then(|ts| DateTime::parse_from_rfc3339(&ts).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                (v, timestamp)
+            })
+            .collect();
+
+        versions.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+        let versions: Vec<String> = versions.into_iter().map(|(v, _)| v).collect();
+
+        Ok(PackageVersions::new(versions))
+    }
+}
+```
+
+**Key Points:**
+- Sort versions by `createdAt` (oldest first, newest last) - same as npm
+- Filter out `yanked` versions (similar to crates.io)
+- Use `latest` field from response for dist-tags if needed
+
+### Component Summary
+
+| Component | File | Description |
+|-----------|------|-------------|
+| RegistryType | `src/parser/types.rs` | Add `Jsr` variant |
+| Parser | `src/parser/deno_json.rs` | New: Parse deno.json imports |
+| Registry | `src/version/registries/jsr.rs` | New: JSR API client |
+| Matcher | `src/version/matchers/jsr.rs` | New: Delegates to npm logic |
+| Resolver | `src/lsp/resolver.rs` | Register JSR resolver |
+
+### Implementation Order
+
+Following TDD methodology:
+
+1. **RegistryType extension** (structural change)
+   - Add `Jsr` variant
+   - Update `as_str()`, `FromStr`, `detect_parser_type()`
+
+2. **Parser implementation** (behavioral change)
+   - Write failing tests for deno.json parsing
+   - Implement `DenoJsonParser`
+   - Handle jsr: prefix extraction
+
+3. **Registry implementation** (behavioral change)
+   - Write failing tests with mock server
+   - Implement `JsrRegistry`
+   - Handle API response parsing
+
+4. **Matcher implementation** (behavioral change)
+   - Write failing tests for version matching
+   - Implement `JsrVersionMatcher` (delegate to npm logic)
+
+5. **Integration** (behavioral change)
+   - Register resolver in factory
+   - Integration tests
+
+---
+
 ## Future Extension Candidates
 
 ### Feature Additions
+- [x] JSR (deno.json) support
 - [ ] Display version details on Hover
 - [ ] Code Action to update to latest version
 - [ ] Completion for version candidates
