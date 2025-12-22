@@ -13,6 +13,8 @@ pub enum RegistryType {
     GoProxy,
     /// pnpm catalog (pnpm-workspace.yaml)
     PnpmCatalog,
+    /// JSR (deno.json)
+    Jsr,
 }
 
 impl RegistryType {
@@ -24,6 +26,7 @@ impl RegistryType {
             RegistryType::CratesIo => "crates_io",
             RegistryType::GoProxy => "go_proxy",
             RegistryType::PnpmCatalog => "pnpm_catalog",
+            RegistryType::Jsr => "jsr",
         }
     }
 }
@@ -38,6 +41,7 @@ impl std::str::FromStr for RegistryType {
             "crates_io" => Ok(RegistryType::CratesIo),
             "go_proxy" => Ok(RegistryType::GoProxy),
             "pnpm_catalog" => Ok(RegistryType::PnpmCatalog),
+            "jsr" => Ok(RegistryType::Jsr),
             _ => Err(()),
         }
     }
@@ -55,6 +59,8 @@ pub fn detect_parser_type(uri: &str) -> Option<RegistryType> {
         Some(RegistryType::GoProxy)
     } else if uri.ends_with("/pnpm-workspace.yaml") {
         Some(RegistryType::PnpmCatalog)
+    } else if uri.ends_with("/deno.json") {
+        Some(RegistryType::Jsr)
     } else {
         None
     }
@@ -125,6 +131,9 @@ mod tests {
         "file:///home/user/pnpm-workspace.yaml",
         Some(RegistryType::PnpmCatalog)
     )]
+    #[case("/path/to/deno.json", Some(RegistryType::Jsr))]
+    #[case("/project/deno.json", Some(RegistryType::Jsr))]
+    #[case("file:///home/user/deno.json", Some(RegistryType::Jsr))]
     #[case("workflow.yml", None)]
     #[case("random.txt", None)]
     fn detect_parser_type_returns_expected(

@@ -94,6 +94,9 @@ pub fn create_test_resolver(
             Arc::new(PnpmCatalogMatcher),
             Arc::new(mock_registry),
         ),
+        RegistryType::Jsr => {
+            unreachable!("JSR resolver not yet implemented - use after phase 2")
+        }
     }
 }
 

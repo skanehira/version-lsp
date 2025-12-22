@@ -49,6 +49,7 @@ pub struct RegistriesConfig {
     pub github: RegistryConfig,
     #[serde(rename = "pnpmCatalog")]
     pub pnpm_catalog: RegistryConfig,
+    pub jsr: RegistryConfig,
 }
 
 /// Individual registry configuration
@@ -120,7 +121,8 @@ mod tests {
                 "crates": { "enabled": true },
                 "goProxy": { "enabled": false },
                 "github": { "enabled": true },
-                "pnpmCatalog": { "enabled": false }
+                "pnpmCatalog": { "enabled": false },
+                "jsr": { "enabled": false }
             }
         }))
         .unwrap();
@@ -137,6 +139,7 @@ mod tests {
                     go_proxy: RegistryConfig { enabled: false },
                     github: RegistryConfig { enabled: true },
                     pnpm_catalog: RegistryConfig { enabled: false },
+                    jsr: RegistryConfig { enabled: false },
                 }
             }
         );
