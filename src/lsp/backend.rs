@@ -99,18 +99,23 @@ impl<S: VersionStorer> Backend<S> {
             match client.configuration(items).await {
                 Ok(configs) => {
                     if let Some(config_value) = configs.into_iter().next() {
-                        match serde_json::from_value::<LspConfig>(config_value) {
-                            Ok(new_config) => {
-                                info!("Configuration updated: {:?}", new_config);
-                                let mut cfg = config.write().expect("config lock poisoned");
-                                *cfg = new_config;
+                        // Handle null/empty configuration by using defaults
+                        let new_config = if config_value.is_null() {
+                            LspConfig::default()
+                        } else {
+                            match serde_json::from_value::<LspConfig>(config_value) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    let msg = format!("Failed to parse configuration: {}", e);
+                                    warn!("{}", msg);
+                                    client.show_message(MessageType::ERROR, msg).await;
+                                    return;
+                                }
                             }
-                            Err(e) => {
-                                let msg = format!("Failed to parse configuration: {}", e);
-                                warn!("{}", msg);
-                                client.show_message(MessageType::ERROR, msg).await;
-                            }
-                        }
+                        };
+                        info!("Configuration updated: {:?}", new_config);
+                        let mut cfg = config.write().expect("config lock poisoned");
+                        *cfg = new_config;
                     }
                 }
                 Err(e) => {

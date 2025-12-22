@@ -94,6 +94,53 @@ fn data_dir_with_env(xdg_data_home: Option<String>, home_dir: Option<PathBuf>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn lsp_config_from_partial_object_uses_defaults_for_missing_fields() {
+        let result = serde_json::from_value::<LspConfig>(json!({
+            "cache": {
+                "refreshInterval": 1000
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(result.cache.refresh_interval, 1000);
+        assert_eq!(result.registries, RegistriesConfig::default());
+    }
+
+    #[test]
+    fn lsp_config_from_full_object_parses_all_fields() {
+        let result = serde_json::from_value::<LspConfig>(json!({
+            "cache": {
+                "refreshInterval": 5000
+            },
+            "registries": {
+                "npm": { "enabled": false },
+                "crates": { "enabled": true },
+                "goProxy": { "enabled": false },
+                "github": { "enabled": true },
+                "pnpmCatalog": { "enabled": false }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            result,
+            LspConfig {
+                cache: CacheConfig {
+                    refresh_interval: 5000
+                },
+                registries: RegistriesConfig {
+                    npm: RegistryConfig { enabled: false },
+                    crates: RegistryConfig { enabled: true },
+                    go_proxy: RegistryConfig { enabled: false },
+                    github: RegistryConfig { enabled: true },
+                    pnpm_catalog: RegistryConfig { enabled: false },
+                }
+            }
+        );
+    }
 
     #[test]
     fn data_dir_with_env_uses_xdg_data_home_when_set() {
