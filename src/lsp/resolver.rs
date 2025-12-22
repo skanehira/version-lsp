@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::parser::cargo_toml::CargoTomlParser;
+use crate::parser::deno_json::DenoJsonParser;
 use crate::parser::github_actions::GitHubActionsParser;
 use crate::parser::go_mod::GoModParser;
 use crate::parser::package_json::PackageJsonParser;
@@ -15,12 +16,13 @@ use crate::parser::traits::Parser;
 use crate::parser::types::RegistryType;
 use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
-    CratesVersionMatcher, GitHubActionsMatcher, GoVersionMatcher, NpmVersionMatcher,
-    PnpmCatalogMatcher,
+    CratesVersionMatcher, GitHubActionsMatcher, GoVersionMatcher, JsrVersionMatcher,
+    NpmVersionMatcher, PnpmCatalogMatcher,
 };
 use crate::version::registries::crates_io::CratesIoRegistry;
 use crate::version::registries::github::GitHubRegistry;
 use crate::version::registries::go_proxy::GoProxyRegistry;
+use crate::version::registries::jsr::JsrRegistry;
 use crate::version::registries::npm::NpmRegistry;
 use crate::version::registry::Registry;
 
@@ -114,6 +116,15 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(PnpmWorkspaceParser),
             Arc::new(PnpmCatalogMatcher),
             Arc::new(npm_restistry),
+        ),
+    );
+
+    resolvers.insert(
+        RegistryType::Jsr,
+        PackageResolver::new(
+            Arc::new(DenoJsonParser::new()),
+            Arc::new(JsrVersionMatcher),
+            Arc::new(JsrRegistry::default()),
         ),
     );
 

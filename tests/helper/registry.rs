@@ -8,6 +8,7 @@ use tempfile::TempDir;
 
 use version_lsp::lsp::resolver::PackageResolver;
 use version_lsp::parser::cargo_toml::CargoTomlParser;
+use version_lsp::parser::deno_json::DenoJsonParser;
 use version_lsp::parser::github_actions::GitHubActionsParser;
 use version_lsp::parser::go_mod::GoModParser;
 use version_lsp::parser::package_json::PackageJsonParser;
@@ -17,8 +18,8 @@ use version_lsp::version::cache::Cache;
 use version_lsp::version::checker::VersionStorer;
 use version_lsp::version::error::RegistryError;
 use version_lsp::version::matchers::{
-    CratesVersionMatcher, GitHubActionsMatcher, GoVersionMatcher, NpmVersionMatcher,
-    PnpmCatalogMatcher,
+    CratesVersionMatcher, GitHubActionsMatcher, GoVersionMatcher, JsrVersionMatcher,
+    NpmVersionMatcher, PnpmCatalogMatcher,
 };
 use version_lsp::version::registry::Registry;
 use version_lsp::version::types::PackageVersions;
@@ -94,9 +95,11 @@ pub fn create_test_resolver(
             Arc::new(PnpmCatalogMatcher),
             Arc::new(mock_registry),
         ),
-        RegistryType::Jsr => {
-            unreachable!("JSR resolver not yet implemented - use after phase 2")
-        }
+        RegistryType::Jsr => PackageResolver::new(
+            Arc::new(DenoJsonParser::new()),
+            Arc::new(JsrVersionMatcher),
+            Arc::new(mock_registry),
+        ),
     }
 }
 
