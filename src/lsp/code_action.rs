@@ -55,6 +55,27 @@ pub fn find_package_at_position(
     PackageIndex::new(packages).find_at_position(position)
 }
 
+/// Extract version prefix (^, ~, >=, <=, >, <, =) from a version string
+fn extract_version_prefix(version: &str) -> &str {
+    if version.starts_with(">=") {
+        ">="
+    } else if version.starts_with("<=") {
+        "<="
+    } else if version.starts_with('>') {
+        ">"
+    } else if version.starts_with('<') {
+        "<"
+    } else if version.starts_with('=') {
+        "="
+    } else if version.starts_with('^') {
+        "^"
+    } else if version.starts_with('~') {
+        "~"
+    } else {
+        ""
+    }
+}
+
 /// Generate Code Actions for version bumping
 ///
 /// Creates up to 3 code actions (patch, minor, major) based on available versions.
@@ -73,6 +94,7 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
     }
 
     let current = &package.version;
+    let prefix = extract_version_prefix(current);
 
     // Calculate bump targets
     let patch = calculate_latest_patch(current, &versions);
@@ -88,9 +110,10 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
         .filter_map(|(version, label)| {
             let v = version?;
             if seen.insert(v.clone()) {
+                let new_version = format!("{prefix}{v}");
                 Some(create_bump_action(
-                    &format!("Bump to latest {label}: {v}"),
-                    &v,
+                    &format!("Bump to latest {label}: {new_version}"),
+                    &new_version,
                     package,
                     uri,
                 ))
@@ -352,5 +375,49 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn generate_bump_code_actions_preserves_caret_prefix() {
+        let storer = MockStorer::new(vec!["4.17.19", "4.17.21", "4.18.0", "5.0.0"]);
+        let package = make_package("lodash", "^4.17.19", 3, 15, 8);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_bump_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[0].title, "Bump to latest patch: ^4.17.21");
+        assert_eq!(actions[1].title, "Bump to latest minor: ^4.18.0");
+        assert_eq!(actions[2].title, "Bump to latest major: ^5.0.0");
+
+        // Verify TextEdit preserves prefix
+        let edit = actions[0].edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let edits = changes.get(&uri).unwrap();
+        assert_eq!(edits[0].new_text, "^4.17.21");
+    }
+
+    #[test]
+    fn generate_bump_code_actions_preserves_tilde_prefix() {
+        let storer = MockStorer::new(vec!["4.17.19", "4.17.21"]);
+        let package = make_package("lodash", "~4.17.19", 3, 15, 8);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_bump_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Bump to latest patch: ~4.17.21");
+    }
+
+    #[test]
+    fn generate_bump_code_actions_preserves_gte_prefix() {
+        let storer = MockStorer::new(vec!["4.17.19", "5.0.0"]);
+        let package = make_package("lodash", ">=4.17.19", 3, 15, 9);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_bump_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Bump to latest major: >=5.0.0");
     }
 }
