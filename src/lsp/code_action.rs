@@ -55,7 +55,7 @@ pub fn find_package_at_position(
     PackageIndex::new(packages).find_at_position(position)
 }
 
-/// Extract version prefix (^, ~, >=, <=, >, <, =) from a version string
+/// Extract version prefix (^, ~, >=, <=, >, <, =, v) from a version string
 fn extract_version_prefix(version: &str) -> &str {
     if version.starts_with(">=") {
         ">="
@@ -71,6 +71,8 @@ fn extract_version_prefix(version: &str) -> &str {
         "^"
     } else if version.starts_with('~') {
         "~"
+    } else if version.starts_with('v') {
+        "v"
     } else {
         ""
     }
@@ -419,5 +421,18 @@ mod tests {
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Bump to latest major: >=5.0.0");
+    }
+
+    #[test]
+    fn generate_bump_code_actions_preserves_v_prefix_for_go() {
+        let storer = MockStorer::new(vec!["0.14.0", "0.15.0", "1.0.0"]);
+        let package = make_package("golang.org/x/text", "v0.14.0", 3, 15, 7);
+        let uri = Url::parse("file:///test/go.mod").unwrap();
+
+        let actions = generate_bump_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].title, "Bump to latest minor: v0.15.0");
+        assert_eq!(actions[1].title, "Bump to latest major: v1.0.0");
     }
 }
