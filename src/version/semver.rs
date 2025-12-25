@@ -11,18 +11,33 @@ pub enum CompareResult {
 /// Parse a version string into a semver::Version, normalizing partial versions.
 ///
 /// Handles partial versions like "1" or "1.2" by padding with zeros.
-/// Does NOT strip 'v' prefix (use `normalize_version` first if needed).
+/// Strips version range prefixes (^, ~, >=, <=, >, <, =) and 'v' prefix.
 ///
 /// Examples:
 /// - "1" -> Version(1, 0, 0)
 /// - "1.2" -> Version(1, 2, 0)
 /// - "1.2.3" -> Version(1, 2, 3)
+/// - "^1.2.3" -> Version(1, 2, 3)
+/// - "~1.2.3" -> Version(1, 2, 3)
+/// - ">=1.2.3" -> Version(1, 2, 3)
+/// - "v1.2.3" -> Version(1, 2, 3)
 pub fn parse_version(version: &str) -> Option<Version> {
-    let parts: Vec<&str> = version.split('.').collect();
+    // Strip version range prefixes and 'v' prefix
+    let stripped = version
+        .trim_start_matches(">=")
+        .trim_start_matches("<=")
+        .trim_start_matches('>')
+        .trim_start_matches('<')
+        .trim_start_matches('=')
+        .trim_start_matches('^')
+        .trim_start_matches('~')
+        .trim_start_matches('v');
+
+    let parts: Vec<&str> = stripped.split('.').collect();
     let normalized = match parts.len() {
         1 => format!("{}.0.0", parts[0]),
         2 => format!("{}.{}.0", parts[0], parts[1]),
-        _ => version.to_string(),
+        _ => stripped.to_string(),
     };
     Version::parse(&normalized).ok()
 }
@@ -101,7 +116,26 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
+    #[case("1.2.3", Some(Version::new(1, 2, 3)))]
+    #[case("^1.2.3", Some(Version::new(1, 2, 3)))] // caret prefix
+    #[case("~1.2.3", Some(Version::new(1, 2, 3)))] // tilde prefix
+    #[case(">=1.2.3", Some(Version::new(1, 2, 3)))] // gte prefix
+    #[case("<=1.2.3", Some(Version::new(1, 2, 3)))] // lte prefix
+    #[case(">1.2.3", Some(Version::new(1, 2, 3)))] // gt prefix
+    #[case("<1.2.3", Some(Version::new(1, 2, 3)))] // lt prefix
+    #[case("=1.2.3", Some(Version::new(1, 2, 3)))] // eq prefix
+    #[case("v1.2.3", Some(Version::new(1, 2, 3)))] // v prefix
+    #[case("1.2", Some(Version::new(1, 2, 0)))] // partial version
+    #[case("1", Some(Version::new(1, 0, 0)))] // single number
+    #[case("invalid", None)] // invalid version
+    fn test_parse_version(#[case] input: &str, #[case] expected: Option<Version>) {
+        assert_eq!(parse_version(input), expected);
+    }
+
+    #[rstest]
     #[case("1.2.3", &["1.2.3", "1.2.5", "1.3.0", "2.0.0"], Some("1.2.5".to_string()))]
+    #[case("^1.2.3", &["1.2.3", "1.2.5", "1.3.0", "2.0.0"], Some("1.2.5".to_string()))] // caret prefix
+    #[case("~1.2.3", &["1.2.3", "1.2.5", "1.3.0", "2.0.0"], Some("1.2.5".to_string()))] // tilde prefix
     #[case("1.2.5", &["1.2.3", "1.2.5", "1.3.0", "2.0.0"], None)] // already latest patch
     #[case("invalid", &["1.2.3", "1.2.5"], None)] // unparseable current version
     #[case("1.2.3", &["invalid", "not-a-version"], None)] // no valid available versions
