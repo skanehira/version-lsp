@@ -12,6 +12,7 @@
 //! - [`server`]: LSP server initialization and lifecycle
 
 pub mod backend;
+pub mod code_action;
 pub mod diagnostics;
 pub mod refresh;
 pub mod resolver;

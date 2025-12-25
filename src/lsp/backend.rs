@@ -7,6 +7,7 @@ use tower_lsp::{Client, LanguageServer};
 use tracing::{debug, error, info, warn};
 
 use crate::config::{LspConfig, data_dir, db_path};
+use crate::lsp::code_action::{PackageIndex, generate_bump_code_actions};
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::refresh::{fetch_missing_packages, refresh_packages};
 use crate::lsp::resolver::{PackageResolver, create_default_resolvers};
@@ -20,6 +21,8 @@ pub struct Backend<S: VersionStorer> {
     storer: Option<Arc<S>>,
     config: Arc<RwLock<LspConfig>>,
     resolvers: HashMap<RegistryType, PackageResolver>,
+    /// Cache of open document contents, keyed by URI
+    documents: Arc<RwLock<HashMap<Url, String>>>,
 }
 
 impl Backend<Cache> {
@@ -32,6 +35,7 @@ impl Backend<Cache> {
             storer,
             config: Arc::new(RwLock::new(config)),
             resolvers,
+            documents: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -70,6 +74,7 @@ impl<S: VersionStorer> Backend<S> {
             storer: Some(storer),
             config: Arc::new(RwLock::new(LspConfig::default())),
             resolvers,
+            documents: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -136,6 +141,7 @@ impl<S: VersionStorer> Backend<S> {
                     ..Default::default()
                 },
             )),
+            code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
             ..Default::default()
         }
     }
@@ -253,7 +259,10 @@ impl<S: VersionStorer> Backend<S> {
 
         // Spawn background task to fetch missing packages
         if !packages.is_empty() {
-            debug!("Spawning background task to fetch {} packages", packages.len());
+            debug!(
+                "Spawning background task to fetch {} packages",
+                packages.len()
+            );
             let registry = resolver.registry().clone();
             let storer = storer.clone();
             let client = self.client.clone();
@@ -326,6 +335,15 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
             )
             .await;
 
+        // Cache document content
+        {
+            let mut docs = self.documents.write().expect("documents lock poisoned");
+            docs.insert(
+                params.text_document.uri.clone(),
+                params.text_document.text.clone(),
+            );
+        }
+
         self.check_and_publish_diagnostics(params.text_document.uri, params.text_document.text)
             .await;
     }
@@ -343,7 +361,105 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
             )
             .await;
 
+        // Update document cache
+        {
+            let mut docs = self.documents.write().expect("documents lock poisoned");
+            docs.insert(params.text_document.uri.clone(), content.clone());
+        }
+
         self.check_and_publish_diagnostics(params.text_document.uri, content)
             .await;
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!("Document closed: {}", params.text_document.uri),
+            )
+            .await;
+
+        // Remove document from cache
+        {
+            let mut docs = self.documents.write().expect("documents lock poisoned");
+            docs.remove(&params.text_document.uri);
+        }
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = &params.text_document.uri;
+        let uri_str = uri.as_str();
+        debug!("Code action requested for URI: {}", uri_str);
+
+        let Some(registry_type) = detect_parser_type(uri_str) else {
+            debug!("No parser type detected for URI: {}", uri_str);
+            return Ok(None);
+        };
+
+        if !self.is_registry_enabled(registry_type) {
+            debug!(
+                "Registry {:?} is disabled, skipping code actions",
+                registry_type
+            );
+            return Ok(None);
+        }
+
+        let Some(resolver) = self.resolvers.get(&registry_type) else {
+            debug!("No resolver found for registry type: {:?}", registry_type);
+            return Ok(None);
+        };
+
+        let Some(storer) = &self.storer else {
+            debug!("Storer not available");
+            return Ok(None);
+        };
+
+        // Get document content from cache
+        let Some(content) = self
+            .documents
+            .read()
+            .expect("documents lock poisoned")
+            .get(uri)
+            .cloned()
+        else {
+            debug!("Document not found in cache: {}", uri_str);
+            return Ok(None);
+        };
+
+        let packages = resolver
+            .parser()
+            .parse(&content)
+            .inspect_err(|e| warn!("Failed to parse {}: {}", uri_str, e))
+            .unwrap_or_default();
+
+        if packages.is_empty() {
+            return Ok(None);
+        }
+
+        let index = PackageIndex::new(&packages);
+        let position = params.range.start;
+
+        let Some(package) = index.find_at_position(position) else {
+            debug!("No package found at position {:?}", position);
+            return Ok(None);
+        };
+
+        debug!(
+            "Found package at cursor: {} {}",
+            package.name, package.version
+        );
+
+        let actions = generate_bump_code_actions(&**storer, package, uri);
+
+        if actions.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            actions
+                .into_iter()
+                .map(CodeActionOrCommand::CodeAction)
+                .collect(),
+        ))
     }
 }
