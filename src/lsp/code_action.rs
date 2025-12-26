@@ -44,17 +44,6 @@ impl<'a> PackageIndex<'a> {
     }
 }
 
-/// Find the package at the given cursor position
-///
-/// Returns the package if the cursor is within the version range of a package.
-/// For single lookups. Use PackageIndex for multiple lookups.
-pub fn find_package_at_position(
-    packages: &[PackageInfo],
-    position: Position,
-) -> Option<&PackageInfo> {
-    PackageIndex::new(packages).find_at_position(position)
-}
-
 /// Extract version prefix (^, ~, >=, <=, >, <, =, v) from a version string
 fn extract_version_prefix(version: &str) -> &str {
     if version.starts_with(">=") {
@@ -210,12 +199,13 @@ mod tests {
         ],
         Some("react")
     )]
-    fn test_find_package_at_position(
+    fn test_package_index_find_at_position(
         #[case] position: Position,
         #[case] packages: Vec<PackageInfo>,
         #[case] expected_name: Option<&str>,
     ) {
-        let result = find_package_at_position(&packages, position);
+        let index = PackageIndex::new(&packages);
+        let result = index.find_at_position(position);
         assert_eq!(result.map(|p| p.name.as_str()), expected_name);
     }
 

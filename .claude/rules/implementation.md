@@ -9,7 +9,8 @@ paths: src/**/*.rs
 - Do NOT write code "just in case" it might be needed later
 - Only implement functionality that is currently required
 - Remove unused methods, fields, and parameters immediately
-- If a method is only used in tests, consider if it's truly necessary
+- If a method is only used in tests, delete it (do not just mark as `#[cfg(test)]`)
+- When reviewing code with unclear intent, ask the user before making changes
 
 ## Error Handling Patterns
 
