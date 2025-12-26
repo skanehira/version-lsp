@@ -11,18 +11,22 @@ use crate::lsp::code_action::{PackageIndex, generate_bump_code_actions};
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::refresh::{fetch_missing_packages, refresh_packages};
 use crate::lsp::resolver::{PackageResolver, create_default_resolvers};
-use crate::parser::types::{RegistryType, detect_parser_type};
+use crate::parser::types::{PackageInfo, RegistryType, detect_parser_type};
 use crate::version::cache::Cache;
 use crate::version::checker::VersionStorer;
 use crate::version::registry::Registry;
+
+/// Cached parsed packages for a document
+struct DocumentCache {
+    packages: Vec<PackageInfo>,
+}
 
 pub struct Backend<S: VersionStorer> {
     client: Client,
     storer: Option<Arc<S>>,
     config: Arc<RwLock<LspConfig>>,
     resolvers: HashMap<RegistryType, PackageResolver>,
-    /// Cache of open document contents, keyed by URI
-    documents: Arc<RwLock<HashMap<Url, String>>>,
+    documents: Arc<RwLock<HashMap<Url, DocumentCache>>>,
 }
 
 impl Backend<Cache> {
@@ -76,6 +80,24 @@ impl<S: VersionStorer> Backend<S> {
             resolvers,
             documents: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Parse document and cache packages
+    fn cache_document(&self, uri: &Url, content: &str) {
+        let uri_str = uri.as_str();
+        let packages = detect_parser_type(uri_str)
+            .and_then(|registry_type| self.resolvers.get(&registry_type))
+            .map(|resolver| {
+                resolver
+                    .parser()
+                    .parse(content)
+                    .inspect_err(|e| warn!("Failed to parse {}: {}", uri_str, e))
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+
+        let mut docs = self.documents.write().expect("documents lock poisoned");
+        docs.insert(uri.clone(), DocumentCache { packages });
     }
 
     /// Check if a registry is enabled in the configuration
@@ -335,14 +357,8 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
             )
             .await;
 
-        // Cache document content
-        {
-            let mut docs = self.documents.write().expect("documents lock poisoned");
-            docs.insert(
-                params.text_document.uri.clone(),
-                params.text_document.text.clone(),
-            );
-        }
+        // Parse and cache packages
+        self.cache_document(&params.text_document.uri, &params.text_document.text);
 
         self.check_and_publish_diagnostics(params.text_document.uri, params.text_document.text)
             .await;
@@ -361,11 +377,8 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
             )
             .await;
 
-        // Update document cache
-        {
-            let mut docs = self.documents.write().expect("documents lock poisoned");
-            docs.insert(params.text_document.uri.clone(), content.clone());
-        }
+        // Re-parse and cache packages
+        self.cache_document(&params.text_document.uri, &content);
 
         self.check_and_publish_diagnostics(params.text_document.uri, content)
             .await;
@@ -404,33 +417,20 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
             return Ok(None);
         }
 
-        let Some(resolver) = self.resolvers.get(&registry_type) else {
-            debug!("No resolver found for registry type: {:?}", registry_type);
-            return Ok(None);
-        };
-
         let Some(storer) = &self.storer else {
             debug!("Storer not available");
             return Ok(None);
         };
 
-        // Get document content from cache
-        let Some(content) = self
-            .documents
-            .read()
-            .expect("documents lock poisoned")
-            .get(uri)
-            .cloned()
-        else {
-            debug!("Document not found in cache: {}", uri_str);
-            return Ok(None);
+        // Get cached packages
+        let packages = {
+            let docs = self.documents.read().expect("documents lock poisoned");
+            let Some(cache) = docs.get(uri) else {
+                debug!("Document not found in cache: {}", uri_str);
+                return Ok(None);
+            };
+            cache.packages.clone()
         };
-
-        let packages = resolver
-            .parser()
-            .parse(&content)
-            .inspect_err(|e| warn!("Failed to parse {}: {}", uri_str, e))
-            .unwrap_or_default();
 
         if packages.is_empty() {
             return Ok(None);
