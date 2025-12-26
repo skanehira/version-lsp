@@ -7,13 +7,16 @@ use tower_lsp::{Client, LanguageServer};
 use tracing::{debug, error, info, warn};
 
 use crate::config::{LspConfig, data_dir, db_path};
-use crate::lsp::code_action::{PackageIndex, generate_bump_code_actions};
+use crate::lsp::code_action::{
+    PackageIndex, generate_bump_code_actions, generate_bump_code_actions_with_sha,
+};
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::refresh::{fetch_missing_packages, refresh_packages};
 use crate::lsp::resolver::{PackageResolver, create_default_resolvers};
 use crate::parser::types::{PackageInfo, RegistryType, detect_parser_type};
 use crate::version::cache::Cache;
 use crate::version::checker::VersionStorer;
+use crate::version::registries::github::GitHubRegistry;
 use crate::version::registry::Registry;
 
 /// Cached parsed packages for a document
@@ -449,7 +452,15 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
             package.name, package.version
         );
 
-        let actions = generate_bump_code_actions(&**storer, package, uri);
+        // For GitHub Actions with commit hash, use async function to fetch SHA
+        let actions = if package.registry_type == RegistryType::GitHubActions
+            && package.commit_hash.is_some()
+        {
+            let sha_fetcher = GitHubRegistry::default();
+            generate_bump_code_actions_with_sha(&**storer, package, uri, &sha_fetcher).await
+        } else {
+            generate_bump_code_actions(&**storer, package, uri)
+        };
 
         if actions.is_empty() {
             return Ok(None);

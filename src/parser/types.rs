@@ -75,6 +75,20 @@ fn is_github_actions_workflow(uri: &str) -> bool {
     is_github_dir && is_yaml
 }
 
+/// Registry-specific additional information
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExtraInfo {
+    /// GitHub Actions specific: comment information
+    GitHubActions {
+        /// Comment text (e.g., "v4.0.0")
+        comment_text: String,
+        /// Start offset of the comment (position of #)
+        comment_start_offset: usize,
+        /// End offset of the comment
+        comment_end_offset: usize,
+    },
+}
+
 /// Information about a package dependency found in a file
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageInfo {
@@ -95,12 +109,56 @@ pub struct PackageInfo {
     pub line: usize,
     /// Column number (0-indexed)
     pub column: usize,
+    /// Registry-specific additional information
+    pub extra_info: Option<ExtraInfo>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    #[test]
+    fn extra_info_github_actions_holds_comment_data() {
+        let extra = ExtraInfo::GitHubActions {
+            comment_text: "v4.1.6".to_string(),
+            comment_start_offset: 100,
+            comment_end_offset: 108,
+        };
+
+        match extra {
+            ExtraInfo::GitHubActions {
+                comment_text,
+                comment_start_offset,
+                comment_end_offset,
+            } => {
+                assert_eq!(comment_text, "v4.1.6");
+                assert_eq!(comment_start_offset, 100);
+                assert_eq!(comment_end_offset, 108);
+            }
+        }
+    }
+
+    #[test]
+    fn package_info_with_extra_info() {
+        let info = PackageInfo {
+            name: "actions/checkout".to_string(),
+            version: "v4.1.6".to_string(),
+            commit_hash: Some("8e5e7e5ab8b370d6c329ec480221332ada57f0ab".to_string()),
+            registry_type: RegistryType::GitHubActions,
+            start_offset: 50,
+            end_offset: 90,
+            line: 5,
+            column: 10,
+            extra_info: Some(ExtraInfo::GitHubActions {
+                comment_text: "v4.1.6".to_string(),
+                comment_start_offset: 92,
+                comment_end_offset: 100,
+            }),
+        };
+
+        assert!(info.extra_info.is_some());
+    }
 
     #[rstest]
     #[case(".github/workflows/ci.yml", Some(RegistryType::GitHubActions))]

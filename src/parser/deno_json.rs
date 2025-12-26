@@ -150,6 +150,7 @@ impl DenoJsonParser {
                 end_offset: version_end_offset,
                 line: start_point.row,
                 column: version_column,
+                extra_info: None,
             });
         }
     }
@@ -189,6 +190,7 @@ mod tests {
                 end_offset: 57,
                 line: 2,
                 column: 19,
+                extra_info: None,
             }
         );
     }
@@ -215,6 +217,7 @@ mod tests {
                     end_offset: 57,
                     line: 2,
                     column: 19,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "@std/path".to_string(),
@@ -225,6 +228,7 @@ mod tests {
                     end_offset: 97,
                     line: 3,
                     column: 18,
+                    extra_info: None,
                 },
             ]
         );
@@ -251,6 +255,7 @@ mod tests {
                 end_offset: 57,
                 line: 2,
                 column: 19,
+                extra_info: None,
             }]
         );
     }
@@ -275,6 +280,7 @@ mod tests {
                 end_offset: 48,
                 line: 2,
                 column: 18,
+                extra_info: None,
             }]
         );
     }

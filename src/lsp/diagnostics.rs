@@ -97,6 +97,7 @@ mod tests {
             end_offset: column + version.len(),
             line,
             column,
+            extra_info: None,
         }
     }
 
@@ -240,6 +241,7 @@ mod tests {
                 end_offset: 20,
                 line: 5,
                 column: 10,
+                extra_info: None,
             }])
         });
 

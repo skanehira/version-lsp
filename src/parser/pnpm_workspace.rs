@@ -139,6 +139,7 @@ impl PnpmWorkspaceParser {
             end_offset,
             line: start_point.row,
             column: start_point.column,
+            extra_info: None,
         })
     }
 
@@ -178,6 +179,7 @@ mod tests {
                     end_offset: 25,
                     line: 1,
                     column: 9,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "lodash".to_string(),
@@ -188,6 +190,7 @@ mod tests {
                     end_offset: 44,
                     line: 2,
                     column: 10,
+                    extra_info: None,
                 },
             ]
         );
@@ -216,6 +219,7 @@ mod tests {
                     end_offset: 39,
                     line: 2,
                     column: 11,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "react-dom".to_string(),
@@ -226,6 +230,7 @@ mod tests {
                     end_offset: 62,
                     line: 3,
                     column: 15,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "react".to_string(),
@@ -236,6 +241,7 @@ mod tests {
                     end_offset: 92,
                     line: 5,
                     column: 11,
+                    extra_info: None,
                 },
             ]
         );
@@ -259,6 +265,7 @@ mod tests {
                 end_offset: 30,
                 line: 1,
                 column: 14,
+                extra_info: None,
             }]
         );
     }

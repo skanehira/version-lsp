@@ -1,7 +1,7 @@
 //! GitHub Actions workflow file parser
 
 use crate::parser::traits::{ParseError, Parser};
-use crate::parser::types::{PackageInfo, RegistryType};
+use crate::parser::types::{ExtraInfo, PackageInfo, RegistryType};
 use tracing::warn;
 
 /// Parser for GitHub Actions workflow files (.github/workflows/*.yml)
@@ -172,7 +172,7 @@ impl GitHubActionsParser {
         // Check if the ref is a commit hash (40 hex characters)
         let is_hash = version.len() == 40 && version.chars().all(|c| c.is_ascii_hexdigit());
 
-        let (final_version, commit_hash) = if is_hash {
+        let (final_version, commit_hash, extra_info) = if is_hash {
             // Try to extract version from comment in the line
             let line_start = content[..start_offset].rfind('\n').map_or(0, |p| p + 1);
             let line_end = content[start_offset..]
@@ -180,18 +180,44 @@ impl GitHubActionsParser {
                 .map_or(content.len(), |p| start_offset + p);
             let line_text = &content[line_start..line_end];
 
-            // Look for # comment with version
-            let comment_version = line_text
-                .find('#')
-                .map(|p| line_text[p + 1..].trim().to_string())
-                .filter(|v| !v.is_empty());
+            // Look for # comment with version and track its position
+            let comment_info = line_text.find('#').and_then(|hash_pos_in_line| {
+                let comment_after_hash = &line_text[hash_pos_in_line + 1..];
+                let trimmed = comment_after_hash.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
 
-            (
-                comment_version.unwrap_or_else(|| version.to_string()),
-                Some(version.to_string()),
-            )
+                // Calculate absolute offsets
+                // hash_pos_in_line is relative to line_start
+                let comment_start_offset = line_start + hash_pos_in_line;
+                // Find where the trimmed comment starts within comment_after_hash
+                let trim_start = comment_after_hash.find(trimmed).unwrap_or(0);
+                let comment_text_start = comment_start_offset + 1 + trim_start;
+                let comment_end_offset = comment_text_start + trimmed.len();
+
+                Some((
+                    trimmed.to_string(),
+                    comment_start_offset,
+                    comment_end_offset,
+                ))
+            });
+
+            let (version_text, extra) = match comment_info {
+                Some((comment_text, comment_start, comment_end)) => {
+                    let extra = ExtraInfo::GitHubActions {
+                        comment_text: comment_text.clone(),
+                        comment_start_offset: comment_start,
+                        comment_end_offset: comment_end,
+                    };
+                    (comment_text, Some(extra))
+                }
+                None => (version.to_string(), None),
+            };
+
+            (version_text, Some(version.to_string()), extra)
         } else {
-            (version.to_string(), None)
+            (version.to_string(), None, None)
         };
 
         Some(PackageInfo {
@@ -203,6 +229,7 @@ impl GitHubActionsParser {
             end_offset,
             line: start_point.row,
             column: version_column,
+            extra_info,
         })
     }
 }
@@ -235,6 +262,7 @@ jobs:
                 end_offset: 104,
                 line: 6,
                 column: 31,
+                extra_info: None,
             }
         );
     }
@@ -265,6 +293,7 @@ jobs:
                     end_offset: 104,
                     line: 6,
                     column: 31,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "actions/setup-node".to_string(),
@@ -275,6 +304,7 @@ jobs:
                     end_offset: 140,
                     line: 7,
                     column: 33,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "actions/cache".to_string(),
@@ -285,6 +315,7 @@ jobs:
                     end_offset: 171,
                     line: 8,
                     column: 28,
+                    extra_info: None,
                 },
             ]
         );
@@ -314,6 +345,7 @@ jobs:
                 end_offset: 142,
                 line: 6,
                 column: 31,
+                extra_info: None,
             }
         );
     }
@@ -342,6 +374,7 @@ jobs:
                 end_offset: 103,
                 line: 6,
                 column: 30,
+                extra_info: None,
             }
         );
     }
@@ -370,6 +403,7 @@ jobs:
                 end_offset: 106,
                 line: 6,
                 column: 31,
+                extra_info: None,
             }
         );
     }
@@ -408,6 +442,7 @@ on: push
                     end_offset: 89,
                     line: 4,
                     column: 31,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "actions/setup-go".to_string(),
@@ -418,6 +453,7 @@ on: push
                     end_offset: 127,
                     line: 5,
                     column: 31,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "actions/cache".to_string(),
@@ -428,6 +464,7 @@ on: push
                     end_offset: 160,
                     line: 6,
                     column: 28,
+                    extra_info: None,
                 },
             ]
         );
@@ -456,6 +493,7 @@ on: push
                     end_offset: 85,
                     line: 4,
                     column: 31,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "actions/setup-node".to_string(),
@@ -466,6 +504,7 @@ on: push
                     end_offset: 138,
                     line: 5,
                     column: 33,
+                    extra_info: None,
                 },
             ]
         );
@@ -498,6 +537,7 @@ jobs:
                 end_offset: 195,
                 line: 9,
                 column: 33,
+                extra_info: None,
             }
         );
     }
@@ -543,6 +583,11 @@ jobs:
                     end_offset: 129,
                     line: 4,
                     column: 37,
+                    extra_info: Some(ExtraInfo::GitHubActions {
+                        comment_text: "v2.62.25".to_string(),
+                        comment_start_offset: 130,
+                        comment_end_offset: 140,
+                    }),
                 },
                 PackageInfo {
                     name: "actions/checkout".to_string(),
@@ -553,6 +598,11 @@ jobs:
                     end_offset: 212,
                     line: 5,
                     column: 31,
+                    extra_info: Some(ExtraInfo::GitHubActions {
+                        comment_text: "v4.1.6".to_string(),
+                        comment_start_offset: 213,
+                        comment_end_offset: 221,
+                    }),
                 },
             ]
         );
@@ -580,6 +630,48 @@ jobs:
                 end_offset: 123,
                 line: 4,
                 column: 31,
+                extra_info: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_extracts_hash_with_comment_includes_extra_info() {
+        let parser = GitHubActionsParser::new();
+        // Content with hash + version comment
+        // "      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v4.1.6"
+        // Position breakdown:
+        // - Line starts at byte 52 (after "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n")
+        // - "      - uses: " = 14 chars
+        // - "actions/checkout@" = 17 chars
+        // - Hash starts at column 31 (14 + 17), byte offset 83
+        // - Hash is 40 chars, ends at byte 123
+        // - " # " = 3 chars at byte 123-126
+        // - Comment "v4.1.6" starts at byte 126, ends at byte 132
+        let content = r#"jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v4.1.6
+"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            PackageInfo {
+                name: "actions/checkout".to_string(),
+                version: "v4.1.6".to_string(),
+                commit_hash: Some("8e5e7e5ab8b370d6c329ec480221332ada57f0ab".to_string()),
+                registry_type: RegistryType::GitHubActions,
+                start_offset: 83,
+                end_offset: 123,
+                line: 4,
+                column: 31,
+                extra_info: Some(ExtraInfo::GitHubActions {
+                    comment_text: "v4.1.6".to_string(),
+                    comment_start_offset: 124,
+                    comment_end_offset: 132,
+                }),
             }
         );
     }
@@ -606,6 +698,7 @@ jobs:
                 end_offset: 85,
                 line: 4,
                 column: 31,
+                extra_info: None,
             }
         );
     }

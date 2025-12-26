@@ -96,3 +96,30 @@ pub async fn wait_for_notification(
         }
     }
 }
+
+/// Create an LSP codeAction request
+#[allow(dead_code)]
+pub fn create_code_action_request(id: i64, uri: &str, line: u32, character: u32) -> Request {
+    Request::build("textDocument/codeAction")
+        .id(id)
+        .params(
+            serde_json::to_value(CodeActionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri.parse().unwrap(),
+                },
+                range: Range {
+                    start: Position { line, character },
+                    end: Position { line, character },
+                },
+                context: CodeActionContext {
+                    diagnostics: vec![],
+                    only: None,
+                    trigger_kind: None,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            })
+            .unwrap(),
+        )
+        .finish()
+}

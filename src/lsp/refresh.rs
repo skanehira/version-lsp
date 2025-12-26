@@ -228,6 +228,7 @@ mod tests {
             end_offset: version.len(),
             line: 0,
             column: 0,
+            extra_info: None,
         }
     }
 

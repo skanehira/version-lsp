@@ -197,6 +197,7 @@ impl CargoTomlParser {
                 end_offset,
                 line,
                 column,
+                extra_info: None,
             });
         }
     }
@@ -304,6 +305,7 @@ serde = "1.0.0"
                 end_offset: 74,
                 line: 5,
                 column: 9,
+                extra_info: None,
             }
         );
     }
@@ -330,6 +332,7 @@ mockall = "0.14"
                 end_offset: 61,
                 line: 4,
                 column: 11,
+                extra_info: None,
             }
         );
     }
@@ -356,6 +359,7 @@ cc = "1.0"
                 end_offset: 57,
                 line: 4,
                 column: 6,
+                extra_info: None,
             }
         );
     }

@@ -18,6 +18,30 @@ struct Release {
     published_at: Option<String>,
 }
 
+/// Response from GitHub Tags API
+#[derive(Debug, Deserialize)]
+struct Tag {
+    name: String,
+    commit: TagCommit,
+}
+
+/// Commit information from GitHub Tags API
+#[derive(Debug, Deserialize)]
+struct TagCommit {
+    sha: String,
+}
+
+/// Trait for fetching commit SHA for a specific tag
+#[async_trait::async_trait]
+pub trait TagShaFetcher: Send + Sync {
+    /// Fetch the commit SHA for a specific tag
+    async fn fetch_tag_sha(
+        &self,
+        package_name: &str,
+        tag_name: &str,
+    ) -> Result<String, RegistryError>;
+}
+
 /// Registry implementation for GitHub Releases API
 pub struct GitHubRegistry {
     client: reqwest::Client,
@@ -39,7 +63,10 @@ impl GitHubRegistry {
 
 impl Default for GitHubRegistry {
     fn default() -> Self {
-        Self::new(DEFAULT_BASE_URL)
+        // Allow overriding base URL for testing
+        let base_url =
+            std::env::var("GITHUB_API_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
+        Self::new(&base_url)
     }
 }
 
@@ -113,6 +140,60 @@ impl Registry for GitHubRegistry {
             .collect();
 
         Ok(PackageVersions::new(versions))
+    }
+}
+
+#[async_trait::async_trait]
+impl TagShaFetcher for GitHubRegistry {
+    async fn fetch_tag_sha(
+        &self,
+        package_name: &str,
+        tag_name: &str,
+    ) -> Result<String, RegistryError> {
+        let url = format!("{}/repos/{}/tags", self.base_url, package_name);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await?;
+
+        let status = response.status();
+
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(RegistryError::NotFound(package_name.to_string()));
+        }
+
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse().ok());
+            return Err(RegistryError::RateLimited {
+                retry_after_secs: retry_after,
+            });
+        }
+
+        if !status.is_success() {
+            warn!("GitHub API returned status {}: {}", status, url);
+            return Err(RegistryError::InvalidResponse(format!(
+                "Unexpected status: {}",
+                status
+            )));
+        }
+
+        let tags: Vec<Tag> = response.json().await.map_err(|e| {
+            warn!("Failed to parse GitHub tags response: {}", e);
+            RegistryError::InvalidResponse(e.to_string())
+        })?;
+
+        // Find the tag with matching name
+        tags.into_iter()
+            .find(|t| t.name == tag_name)
+            .map(|t| t.commit.sha)
+            .ok_or_else(|| RegistryError::NotFound(format!("Tag {} not found", tag_name)))
     }
 }
 
@@ -220,5 +301,80 @@ mod tests {
 
         mock.assert_async().await;
         assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_tag_sha_returns_sha_for_existing_tag() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/repos/actions/checkout/tags")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"name": "v4.1.6", "commit": {"sha": "8e5e7e5ab8b370d6c329ec480221332ada57f0ab"}},
+                    {"name": "v4.1.5", "commit": {"sha": "abcdef1234567890abcdef1234567890abcdef12"}}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let registry = GitHubRegistry::new(&server.url());
+        let result = registry
+            .fetch_tag_sha("actions/checkout", "v4.1.6")
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(result, "8e5e7e5ab8b370d6c329ec480221332ada57f0ab");
+    }
+
+    #[tokio::test]
+    async fn fetch_tag_sha_returns_not_found_for_nonexistent_tag() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/repos/actions/checkout/tags")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"name": "v4.1.5", "commit": {"sha": "abcdef1234567890abcdef1234567890abcdef12"}}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let registry = GitHubRegistry::new(&server.url());
+        let result = registry.fetch_tag_sha("actions/checkout", "v4.1.6").await;
+
+        mock.assert_async().await;
+        assert!(matches!(result, Err(RegistryError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn fetch_tag_sha_returns_rate_limited_for_429() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/repos/actions/checkout/tags")
+            .with_status(429)
+            .with_header("content-type", "application/json")
+            .with_header("retry-after", "120")
+            .with_body(r#"{"message": "API rate limit exceeded"}"#)
+            .create_async()
+            .await;
+
+        let registry = GitHubRegistry::new(&server.url());
+        let result = registry.fetch_tag_sha("actions/checkout", "v4.1.6").await;
+
+        mock.assert_async().await;
+        assert!(matches!(
+            result,
+            Err(RegistryError::RateLimited {
+                retry_after_secs: Some(120)
+            })
+        ));
     }
 }

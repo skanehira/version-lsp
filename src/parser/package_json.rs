@@ -175,6 +175,7 @@ impl PackageJsonParser {
                 end_offset: version_end_offset,
                 line: start_point.row,
                 column: version_column,
+                extra_info: None,
             });
         }
     }
@@ -216,6 +217,7 @@ mod tests {
                 end_offset: 64,
                 line: 3,
                 column: 15,
+                extra_info: None,
             }
         );
     }
@@ -242,6 +244,7 @@ mod tests {
                 end_offset: 69,
                 line: 3,
                 column: 19,
+                extra_info: None,
             }
         );
     }
@@ -268,6 +271,7 @@ mod tests {
                 end_offset: 68,
                 line: 3,
                 column: 14,
+                extra_info: None,
             }
         );
     }
@@ -300,6 +304,7 @@ mod tests {
                     end_offset: 64,
                     line: 3,
                     column: 15,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "typescript".to_string(),
@@ -310,6 +315,7 @@ mod tests {
                     end_offset: 118,
                     line: 6,
                     column: 19,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "react".to_string(),
@@ -320,6 +326,7 @@ mod tests {
                     end_offset: 169,
                     line: 9,
                     column: 14,
+                    extra_info: None,
                 },
             ]
         );
@@ -349,6 +356,7 @@ mod tests {
                     end_offset: 65,
                     line: 3,
                     column: 15,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "express".to_string(),
@@ -359,6 +367,7 @@ mod tests {
                     end_offset: 91,
                     line: 4,
                     column: 16,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "uuid".to_string(),
@@ -369,6 +378,7 @@ mod tests {
                     end_offset: 114,
                     line: 5,
                     column: 13,
+                    extra_info: None,
                 },
             ]
         );
@@ -397,6 +407,7 @@ mod tests {
                     end_offset: 68,
                     line: 3,
                     column: 20,
+                    extra_info: None,
                 },
                 PackageInfo {
                     name: "@babel/core".to_string(),
@@ -407,6 +418,7 @@ mod tests {
                     end_offset: 97,
                     line: 4,
                     column: 20,
+                    extra_info: None,
                 },
             ]
         );
@@ -444,6 +456,7 @@ mod tests {
                 end_offset: 44,
                 line: 2,
                 column: 15,
+                extra_info: None,
             }
         );
     }

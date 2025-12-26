@@ -100,6 +100,7 @@ impl Parser for GoModParser {
                         end_offset: version_end,
                         line: line_num,
                         column,
+                        extra_info: None,
                     });
                 }
             } else if let Some(caps) = self.single_require_re.captures(trimmed) {
@@ -131,6 +132,7 @@ impl Parser for GoModParser {
                     end_offset: version_end,
                     line: line_num,
                     column: version_pos_in_line,
+                    extra_info: None,
                 });
             }
         }
