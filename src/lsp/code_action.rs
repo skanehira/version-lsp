@@ -3,6 +3,7 @@
 use crate::parser::types::{ExtraInfo, PackageInfo};
 use crate::version::checker::VersionStorer;
 use crate::version::registries::github::TagShaFetcher;
+use crate::version::resolver::LatestVersionResolver;
 use crate::version::semver::{
     calculate_latest_major, calculate_latest_minor, calculate_latest_patch,
 };
@@ -155,8 +156,13 @@ fn create_bump_action(
 /// When the package has a commit hash (GitHub Actions), this function will fetch
 /// the commit SHA for each bump target and generate code actions that replace
 /// the hash (and optionally the comment) with the new SHA and version.
-pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetcher>(
+pub async fn generate_bump_code_actions_with_sha<
+    S: VersionStorer + ?Sized,
+    F: TagShaFetcher,
+    R: LatestVersionResolver + ?Sized,
+>(
     storer: &S,
+    resolver: &R,
     package: &PackageInfo,
     uri: &Url,
     sha_fetcher: &F,
@@ -175,7 +181,8 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
 
     if is_hash_only {
         // Pattern 1: Hash only - just offer the latest version
-        return generate_hash_only_actions(storer, package, uri, sha_fetcher, &versions).await;
+        return generate_hash_only_actions(storer, resolver, package, uri, sha_fetcher, &versions)
+            .await;
     }
 
     let current = &package.version;
@@ -236,15 +243,24 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
 ///
 /// For hash-only packages, we don't know the current semantic version,
 /// so we just offer to update to the latest available version.
-async fn generate_hash_only_actions<S: VersionStorer, F: TagShaFetcher>(
+async fn generate_hash_only_actions<
+    S: VersionStorer + ?Sized,
+    F: TagShaFetcher,
+    R: LatestVersionResolver + ?Sized,
+>(
     storer: &S,
+    resolver: &R,
     package: &PackageInfo,
     uri: &Url,
     sha_fetcher: &F,
-    _versions: &[String],
+    versions: &[String],
 ) -> Vec<CodeAction> {
     // For hash-only, we don't know the current version, so just offer the latest
-    let Ok(Some(latest)) = storer.get_latest_version(package.registry_type, &package.name) else {
+    let dist_tags = storer
+        .get_all_dist_tags(package.registry_type, &package.name)
+        .ok()
+        .flatten();
+    let Some(latest) = resolver.resolve_latest(versions, dist_tags.as_ref()) else {
         return vec![];
     };
 
@@ -397,14 +413,6 @@ mod tests {
     }
 
     impl VersionStorer for MockStorer {
-        fn get_latest_version(
-            &self,
-            _registry_type: RegistryType,
-            _package_name: &str,
-        ) -> Result<Option<String>, CacheError> {
-            Ok(self.versions.iter().max().cloned())
-        }
-
         fn get_versions(
             &self,
             _registry_type: RegistryType,
@@ -469,6 +477,14 @@ mod tests {
             Ok(())
         }
 
+        fn get_all_dist_tags(
+            &self,
+            _registry_type: RegistryType,
+            _package_name: &str,
+        ) -> Result<Option<std::collections::HashMap<String, String>>, CacheError> {
+            Ok(None)
+        }
+
         fn filter_packages_not_in_cache(
             &self,
             _registry_type: RegistryType,
@@ -477,6 +493,8 @@ mod tests {
             Ok(vec![])
         }
     }
+
+    use crate::version::resolvers::GitHubActionsLatestResolver;
 
     #[test]
     fn generate_bump_code_actions_returns_three_actions_when_all_bumps_available() {
@@ -708,9 +726,11 @@ mod tests {
             31,
         );
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
+        let resolver = GitHubActionsLatestResolver;
 
         let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+            generate_bump_code_actions_with_sha(&storer, &resolver, &package, &uri, &sha_fetcher)
+                .await;
 
         assert_eq!(actions.len(), 1);
         // For hash-only packages, we don't know the current version, so just offer "Bump to latest"
@@ -732,6 +752,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generate_bump_code_actions_with_sha_hash_only_uses_published_order() {
+        // Later published hotfix should be treated as latest even if semver is lower.
+        let storer = MockStorer::new(vec!["v2.0.0", "v1.9.9"]);
+        let sha_fetcher =
+            MockTagShaFetcher::new(vec![("v1.9.9", "newsha1234567890newsha1234567890newsha12")]);
+        let package = make_github_actions_package_hash_only(
+            "actions/checkout",
+            "8e5e7e5ab8b370d6c329ec480221332ada57f0ab",
+            "8e5e7e5ab8b370d6c329ec480221332ada57f0ab",
+            4,
+            31,
+        );
+        let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
+        let resolver = GitHubActionsLatestResolver;
+
+        let actions =
+            generate_bump_code_actions_with_sha(&storer, &resolver, &package, &uri, &sha_fetcher)
+                .await;
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Bump to latest: v1.9.9");
+    }
+
+    #[tokio::test]
     async fn generate_bump_code_actions_with_sha_pattern2_hash_with_comment() {
         // Pattern 2: Hash + comment → New hash + new comment
         // Note: GitHub Actions releases typically have "v" prefix in tag names
@@ -750,9 +794,11 @@ mod tests {
             80, // comment end
         );
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
+        let resolver = GitHubActionsLatestResolver;
 
         let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+            generate_bump_code_actions_with_sha(&storer, &resolver, &package, &uri, &sha_fetcher)
+                .await;
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Bump to latest patch: v4.1.6");
@@ -785,9 +831,11 @@ mod tests {
             31,
         );
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
+        let resolver = GitHubActionsLatestResolver;
 
         let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+            generate_bump_code_actions_with_sha(&storer, &resolver, &package, &uri, &sha_fetcher)
+                .await;
 
         assert!(actions.is_empty());
     }
@@ -799,9 +847,11 @@ mod tests {
         let sha_fetcher = MockTagShaFetcher::new(vec![]);
         let package = make_package("actions/checkout", "v3.0.0", 4, 31, 6);
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
+        let resolver = GitHubActionsLatestResolver;
 
         let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+            generate_bump_code_actions_with_sha(&storer, &resolver, &package, &uri, &sha_fetcher)
+                .await;
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Bump to latest major: v4.0.0");

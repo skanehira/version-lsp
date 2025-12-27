@@ -36,5 +36,7 @@ pub mod matcher;
 pub mod matchers;
 pub mod registries;
 pub mod registry;
+pub mod resolver;
+pub mod resolvers;
 pub mod semver;
 pub mod types;

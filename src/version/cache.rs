@@ -147,6 +147,7 @@ impl Cache {
             SELECT v.version FROM versions v
             JOIN packages p ON v.package_id = p.id
             WHERE p.registry_type = ?1 AND p.package_name = ?2
+            ORDER BY v.id ASC
             "#,
         )?;
 
@@ -229,52 +230,38 @@ impl Cache {
             Err(e) => Err(e.into()),
         }
     }
+
+    /// Get all dist tags for a package
+    pub fn get_all_dist_tags(
+        &self,
+        registry_type: &str,
+        package_name: &str,
+    ) -> Result<Option<HashMap<String, String>>, CacheError> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT dt.tag_name, dt.version FROM dist_tags dt
+            JOIN packages p ON dt.package_id = p.id
+            WHERE p.registry_type = ?1 AND p.package_name = ?2
+            "#,
+        )?;
+
+        let tags: HashMap<String, String> = stmt
+            .query_map((registry_type, package_name), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if tags.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(tags))
+        }
+    }
 }
 
 impl VersionStorer for Cache {
-    fn get_latest_version(
-        &self,
-        registry_type: RegistryType,
-        package_name: &str,
-    ) -> Result<Option<String>, CacheError> {
-        let registry_type = registry_type.as_str();
-        let conn = self.lock_conn()?;
-
-        // First, try to get the "latest" dist-tag (for npm packages)
-        let dist_tag_result = conn.query_row(
-            r#"
-            SELECT dt.version FROM dist_tags dt
-            JOIN packages p ON dt.package_id = p.id
-            WHERE p.registry_type = ?1 AND p.package_name = ?2 AND dt.tag_name = 'latest'
-            "#,
-            (registry_type, package_name),
-            |row| row.get::<_, String>(0),
-        );
-
-        if let Ok(version) = dist_tag_result {
-            return Ok(Some(version));
-        }
-
-        // Fall back to the last inserted version (for registries without dist-tags)
-        let result = conn.query_row(
-            r#"
-            SELECT v.version FROM versions v
-            JOIN packages p ON v.package_id = p.id
-            WHERE p.registry_type = ?1 AND p.package_name = ?2
-            ORDER BY v.id DESC
-            LIMIT 1
-            "#,
-            (registry_type, package_name),
-            |row| row.get(0),
-        );
-
-        match result {
-            Ok(version) => Ok(Some(version)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
     fn get_versions(
         &self,
         registry_type: RegistryType,
@@ -463,6 +450,14 @@ impl VersionStorer for Cache {
         dist_tags: &HashMap<String, String>,
     ) -> Result<(), CacheError> {
         Cache::save_dist_tags(self, registry_type.as_str(), package_name, dist_tags)
+    }
+
+    fn get_all_dist_tags(
+        &self,
+        registry_type: RegistryType,
+        package_name: &str,
+    ) -> Result<Option<HashMap<String, String>>, CacheError> {
+        Cache::get_all_dist_tags(self, registry_type.as_str(), package_name)
     }
 
     fn filter_packages_not_in_cache(
@@ -656,36 +651,6 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case(RegistryType::Npm, "axios", Some("3.0.0".to_string()))]
-    #[case(RegistryType::Npm, "nonexistent", None)]
-    #[case(RegistryType::CratesIo, "axios", None)]
-    fn get_latest_version_returns_last_inserted(
-        #[case] registry_type: RegistryType,
-        #[case] package_name: &str,
-        #[case] expected: Option<String>,
-    ) {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
-
-        let versions = vec![
-            "1.0.0".to_string(),
-            "2.0.0".to_string(),
-            "3.0.0".to_string(),
-        ];
-        cache
-            .replace_versions(RegistryType::Npm, "axios", versions)
-            .unwrap();
-
-        assert_eq!(
-            cache
-                .get_latest_version(registry_type, package_name)
-                .unwrap(),
-            expected
-        );
-    }
-
     #[test]
     fn get_packages_needing_refresh_returns_packages_older_than_refresh_interval() {
         let temp_dir = TempDir::new().unwrap();
@@ -831,54 +796,29 @@ mod tests {
     }
 
     #[test]
-    fn get_latest_version_prefers_dist_tag_latest_over_last_inserted() {
+    fn get_all_dist_tags_returns_all_tags() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let cache = Cache::new(&db_path, 86400).unwrap();
 
-        // Insert versions in order: stable versions first, then pre-release
-        // This simulates npm's time-based ordering where pre-release comes last
-        let versions = vec![
-            "4.17.20".to_string(),
-            "4.17.21".to_string(),               // This is the stable latest
-            "0.0.0-insiders.abc123".to_string(), // Pre-release published after stable
-        ];
-        cache
-            .replace_versions(RegistryType::Npm, "tailwindcss", versions)
-            .unwrap();
-
-        // Set dist-tags with latest pointing to stable version
         let mut dist_tags = std::collections::HashMap::new();
         dist_tags.insert("latest".to_string(), "4.17.21".to_string());
-        dist_tags.insert("insiders".to_string(), "0.0.0-insiders.abc123".to_string());
-        cache
-            .save_dist_tags("npm", "tailwindcss", &dist_tags)
-            .unwrap();
+        dist_tags.insert("beta".to_string(), "5.0.0-beta.1".to_string());
 
-        // get_latest_version should return dist-tags.latest, not the last inserted version
-        let latest = cache
-            .get_latest_version(RegistryType::Npm, "tailwindcss")
-            .unwrap();
-        assert_eq!(latest, Some("4.17.21".to_string()));
+        cache.save_dist_tags("npm", "lodash", &dist_tags).unwrap();
+
+        let all_tags = cache.get_all_dist_tags("npm", "lodash").unwrap();
+        assert_eq!(all_tags, Some(dist_tags));
     }
 
     #[test]
-    fn get_latest_version_falls_back_to_last_inserted_when_no_dist_tag() {
+    fn get_all_dist_tags_returns_none_for_nonexistent_package() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let cache = Cache::new(&db_path, 86400).unwrap();
 
-        // Insert versions without dist-tags (like GitHub Actions)
-        let versions = vec!["v3.0.0".to_string(), "v4.0.0".to_string()];
-        cache
-            .replace_versions(RegistryType::GitHubActions, "actions/checkout", versions)
-            .unwrap();
-
-        // No dist-tags set, should return last inserted version
-        let latest = cache
-            .get_latest_version(RegistryType::GitHubActions, "actions/checkout")
-            .unwrap();
-        assert_eq!(latest, Some("v4.0.0".to_string()));
+        let all_tags = cache.get_all_dist_tags("npm", "nonexistent").unwrap();
+        assert_eq!(all_tags, None);
     }
 
     #[test]

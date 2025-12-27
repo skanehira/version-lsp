@@ -22,6 +22,10 @@ use version_lsp::version::matchers::{
     NpmVersionMatcher, PnpmCatalogMatcher,
 };
 use version_lsp::version::registry::Registry;
+use version_lsp::version::resolvers::{
+    CratesLatestResolver, GitHubActionsLatestResolver, GoLatestResolver, JsrLatestResolver,
+    NpmLatestResolver, PnpmCatalogLatestResolver,
+};
 use version_lsp::version::types::PackageVersions;
 
 /// Mock registry for testing
@@ -74,31 +78,37 @@ pub fn create_test_resolver(
             Arc::new(GitHubActionsParser::new()),
             Arc::new(GitHubActionsMatcher),
             Arc::new(mock_registry),
+            Arc::new(GitHubActionsLatestResolver),
         ),
         RegistryType::Npm => PackageResolver::new(
             Arc::new(PackageJsonParser::new()),
             Arc::new(NpmVersionMatcher),
             Arc::new(mock_registry),
+            Arc::new(NpmLatestResolver),
         ),
         RegistryType::CratesIo => PackageResolver::new(
             Arc::new(CargoTomlParser::new()),
             Arc::new(CratesVersionMatcher),
             Arc::new(mock_registry),
+            Arc::new(CratesLatestResolver),
         ),
         RegistryType::GoProxy => PackageResolver::new(
             Arc::new(GoModParser::new()),
             Arc::new(GoVersionMatcher),
             Arc::new(mock_registry),
+            Arc::new(GoLatestResolver),
         ),
         RegistryType::PnpmCatalog => PackageResolver::new(
             Arc::new(PnpmWorkspaceParser),
             Arc::new(PnpmCatalogMatcher),
             Arc::new(mock_registry),
+            Arc::new(PnpmCatalogLatestResolver),
         ),
         RegistryType::Jsr => PackageResolver::new(
             Arc::new(DenoJsonParser::new()),
             Arc::new(JsrVersionMatcher),
             Arc::new(mock_registry),
+            Arc::new(JsrLatestResolver),
         ),
     }
 }

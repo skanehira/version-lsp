@@ -3,6 +3,7 @@
 mod helper;
 
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use mockito::Server;
 use tower::Service;
@@ -19,6 +20,11 @@ use version_lsp::lsp::resolver::PackageResolver;
 use version_lsp::parser::types::RegistryType;
 
 use crate::helper::create_did_change_notification;
+
+fn github_api_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn did_open_publishes_outdated_version_warning() {
@@ -401,6 +407,7 @@ jobs:
 #[tokio::test(flavor = "multi_thread")]
 async fn code_action_returns_bump_actions_for_hash_with_comment() {
     // Pattern 2: Hash + comment → Returns version bump code actions with SHA replacement
+    let _env_guard = github_api_env_lock().lock().unwrap();
     let mut server = Server::new_async().await;
 
     // Mock GitHub Tags API (called twice: once for patch, once for minor)
@@ -534,6 +541,7 @@ jobs:
 #[tokio::test(flavor = "multi_thread")]
 async fn code_action_returns_bump_actions_for_hash_only() {
     // Pattern 1: Hash only → Returns version bump code action with SHA replacement
+    let _env_guard = github_api_env_lock().lock().unwrap();
     let mut server = Server::new_async().await;
 
     // Mock GitHub Tags API
