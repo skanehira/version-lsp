@@ -9,13 +9,15 @@ use crate::version::checker::{
     VersionCompareResult, VersionStatus, VersionStorer, compare_version,
 };
 use crate::version::matcher::VersionMatcher;
+use crate::version::resolver::LatestVersionResolver;
 
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Generate diagnostics for a document by parsing and checking versions
-pub fn generate_diagnostics<S: VersionStorer>(
+pub fn generate_diagnostics<S: VersionStorer + ?Sized, R: LatestVersionResolver + ?Sized>(
     parser: &dyn Parser,
     matcher: &dyn VersionMatcher,
+    resolver: &R,
     storer: &S,
     content: &str,
 ) -> Vec<Diagnostic> {
@@ -27,7 +29,8 @@ pub fn generate_diagnostics<S: VersionStorer>(
     packages
         .iter()
         .filter_map(|package| {
-            let result = compare_version(storer, matcher, &package.name, &package.version).ok()?;
+            let result =
+                compare_version(storer, matcher, resolver, &package.name, &package.version).ok()?;
             create_diagnostic(package, &result)
         })
         .collect()
@@ -85,6 +88,7 @@ mod tests {
     use crate::parser::types::RegistryType;
     use crate::version::checker::MockVersionStorer;
     use crate::version::matchers::GitHubActionsMatcher;
+    use crate::version::resolvers::GitHubActionsLatestResolver;
     use rstest::rstest;
 
     fn make_package_info(name: &str, version: &str, line: usize, column: usize) -> PackageInfo {
@@ -103,16 +107,16 @@ mod tests {
 
     #[rstest]
     #[case(
-        "3.0.0",
+        "v3.0.0",
         true,
         DiagnosticSeverity::WARNING,
-        "Update available: 3.0.0 -> 4.0.0"
+        "Update available: v3.0.0 -> v4.0.0"
     )]
     #[case(
-        "9.9.9",
+        "v9.9.9",
         false,
         DiagnosticSeverity::ERROR,
-        "Version 9.9.9 not found in registry"
+        "Version v9.9.9 not found in registry"
     )]
     #[case(
         "invalid",
@@ -140,22 +144,19 @@ mod tests {
         let exists = version_exists;
         let version_for_closure = current_version.to_string();
         let mut storer = MockVersionStorer::new();
-        storer
-            .expect_get_latest_version()
-            .returning(|_, _| Ok(Some("4.0.0".to_string())));
-        storer.expect_get_dist_tag().returning(|_, _, _| Ok(None)); // GitHub Actions don't have dist-tags
+        storer.expect_get_dist_tag().returning(|_, _, _| Ok(None));
+        storer.expect_get_all_dist_tags().returning(|_, _| Ok(None));
         storer.expect_get_versions().returning(move |_, _| {
             if exists {
-                // Return versions that include the current version for existence check
-                Ok(vec![version_for_closure.clone(), "4.0.0".to_string()])
+                Ok(vec![version_for_closure.clone(), "v4.0.0".to_string()])
             } else {
-                // Return versions without the current version
-                Ok(vec!["4.0.0".to_string()])
+                Ok(vec!["v4.0.0".to_string()])
             }
         });
         let matcher = GitHubActionsMatcher;
+        let resolver = GitHubActionsLatestResolver;
 
-        let diagnostics = generate_diagnostics(&parser, &matcher, &storer, "content");
+        let diagnostics = generate_diagnostics(&parser, &matcher, &resolver, &storer, "content");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Some(expected_severity));
@@ -167,19 +168,18 @@ mod tests {
         let mut parser = MockParser::new();
         parser
             .expect_parse()
-            .returning(|_| Ok(vec![make_package_info("actions/checkout", "4.0.0", 5, 14)]));
+            .returning(|_| Ok(vec![make_package_info("actions/checkout", "v4.0.0", 5, 14)]));
 
         let mut storer = MockVersionStorer::new();
-        storer
-            .expect_get_latest_version()
-            .returning(|_, _| Ok(Some("4.0.0".to_string())));
         storer.expect_get_dist_tag().returning(|_, _, _| Ok(None));
+        storer.expect_get_all_dist_tags().returning(|_, _| Ok(None));
         storer
             .expect_get_versions()
-            .returning(|_, _| Ok(vec!["4.0.0".to_string()]));
+            .returning(|_, _| Ok(vec!["v4.0.0".to_string()]));
         let matcher = GitHubActionsMatcher;
+        let resolver = GitHubActionsLatestResolver;
 
-        let diagnostics = generate_diagnostics(&parser, &matcher, &storer, "content");
+        let diagnostics = generate_diagnostics(&parser, &matcher, &resolver, &storer, "content");
 
         assert!(diagnostics.is_empty());
     }
@@ -189,42 +189,37 @@ mod tests {
         let mut parser = MockParser::new();
         parser
             .expect_parse()
-            .returning(|_| Ok(vec![make_package_info("actions/checkout", "4.0.0", 5, 14)]));
+            .returning(|_| Ok(vec![make_package_info("actions/checkout", "v4.0.0", 5, 14)]));
 
         let mut storer = MockVersionStorer::new();
-        storer
-            .expect_get_latest_version()
-            .returning(|_, _| Ok(None));
+        storer.expect_get_all_dist_tags().returning(|_, _| Ok(None));
+        storer.expect_get_versions().returning(|_, _| Ok(vec![]));
         let matcher = GitHubActionsMatcher;
+        let resolver = GitHubActionsLatestResolver;
 
-        let diagnostics = generate_diagnostics(&parser, &matcher, &storer, "content");
+        let diagnostics = generate_diagnostics(&parser, &matcher, &resolver, &storer, "content");
 
         assert!(diagnostics.is_empty());
     }
 
     #[test]
     fn generate_diagnostics_skips_version_newer_than_latest() {
-        // When a version exists but is newer than the "latest" dist-tag
-        // (e.g., ag-grid 33.0.3 exists but dist-tags.latest is 32.3.9)
-        // we should NOT show any diagnostic
         let mut parser = MockParser::new();
         parser
             .expect_parse()
-            .returning(|_| Ok(vec![make_package_info("actions/checkout", "5.0.0", 5, 14)]));
+            .returning(|_| Ok(vec![make_package_info("actions/checkout", "v5.0.0", 5, 14)]));
 
         let mut storer = MockVersionStorer::new();
-        storer
-            .expect_get_latest_version()
-            .returning(|_, _| Ok(Some("4.0.0".to_string())));
         storer.expect_get_dist_tag().returning(|_, _, _| Ok(None));
+        storer.expect_get_all_dist_tags().returning(|_, _| Ok(None));
         storer
             .expect_get_versions()
-            .returning(|_, _| Ok(vec!["5.0.0".to_string(), "4.0.0".to_string()]));
+            .returning(|_, _| Ok(vec!["v5.0.0".to_string(), "v4.0.0".to_string()]));
         let matcher = GitHubActionsMatcher;
+        let resolver = GitHubActionsLatestResolver;
 
-        let diagnostics = generate_diagnostics(&parser, &matcher, &storer, "content");
+        let diagnostics = generate_diagnostics(&parser, &matcher, &resolver, &storer, "content");
 
-        // Version 5.0.0 exists and is newer than latest (4.0.0) - no diagnostic
         assert!(diagnostics.is_empty());
     }
 
@@ -234,7 +229,7 @@ mod tests {
         parser.expect_parse().returning(|_| {
             Ok(vec![PackageInfo {
                 name: "actions/checkout".to_string(),
-                version: "3.0.0".to_string(),
+                version: "v3.0.0".to_string(),
                 commit_hash: None,
                 registry_type: RegistryType::GitHubActions,
                 start_offset: 10,
@@ -246,16 +241,15 @@ mod tests {
         });
 
         let mut storer = MockVersionStorer::new();
-        storer
-            .expect_get_latest_version()
-            .returning(|_, _| Ok(Some("4.0.0".to_string())));
         storer.expect_get_dist_tag().returning(|_, _, _| Ok(None));
+        storer.expect_get_all_dist_tags().returning(|_, _| Ok(None));
         storer
             .expect_get_versions()
-            .returning(|_, _| Ok(vec!["3.0.0".to_string(), "4.0.0".to_string()]));
+            .returning(|_, _| Ok(vec!["v3.0.0".to_string(), "v4.0.0".to_string()]));
         let matcher = GitHubActionsMatcher;
+        let resolver = GitHubActionsLatestResolver;
 
-        let diagnostics = generate_diagnostics(&parser, &matcher, &storer, "content");
+        let diagnostics = generate_diagnostics(&parser, &matcher, &resolver, &storer, "content");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(

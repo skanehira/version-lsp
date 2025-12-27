@@ -25,6 +25,11 @@ use crate::version::registries::go_proxy::GoProxyRegistry;
 use crate::version::registries::jsr::JsrRegistry;
 use crate::version::registries::npm::NpmRegistry;
 use crate::version::registry::Registry;
+use crate::version::resolver::LatestVersionResolver;
+use crate::version::resolvers::{
+    CratesLatestResolver, GitHubActionsLatestResolver, GoLatestResolver, JsrLatestResolver,
+    NpmLatestResolver, PnpmCatalogLatestResolver,
+};
 
 /// Groups all components needed to resolve and validate package versions for a specific registry.
 ///
@@ -33,10 +38,12 @@ use crate::version::registry::Registry;
 /// - Parsing files to extract package information
 /// - Matching version specifications against available versions
 /// - Fetching package versions from the remote registry
+/// - Resolving the latest version from available versions
 pub struct PackageResolver {
     parser: Arc<dyn Parser>,
     matcher: Arc<dyn VersionMatcher>,
     registry: Arc<dyn Registry>,
+    version_resolver: Arc<dyn LatestVersionResolver>,
 }
 
 impl PackageResolver {
@@ -45,11 +52,13 @@ impl PackageResolver {
         parser: Arc<dyn Parser>,
         matcher: Arc<dyn VersionMatcher>,
         registry: Arc<dyn Registry>,
+        version_resolver: Arc<dyn LatestVersionResolver>,
     ) -> Self {
         Self {
             parser,
             matcher,
             registry,
+            version_resolver,
         }
     }
 
@@ -67,12 +76,17 @@ impl PackageResolver {
     pub fn registry(&self) -> &Arc<dyn Registry> {
         &self.registry
     }
+
+    /// Get the version resolver for this registry type
+    pub fn version_resolver(&self) -> &Arc<dyn LatestVersionResolver> {
+        &self.version_resolver
+    }
 }
 
 /// Create the default set of package resolvers for all supported registry types
 pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
     let mut resolvers = HashMap::new();
-    let npm_restistry = NpmRegistry::default();
+    let npm_registry = NpmRegistry::default();
 
     resolvers.insert(
         RegistryType::GitHubActions,
@@ -80,6 +94,7 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(GitHubActionsParser::new()),
             Arc::new(GitHubActionsMatcher),
             Arc::new(GitHubRegistry::default()),
+            Arc::new(GitHubActionsLatestResolver),
         ),
     );
 
@@ -88,7 +103,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
         PackageResolver::new(
             Arc::new(PackageJsonParser::new()),
             Arc::new(NpmVersionMatcher),
-            Arc::new(npm_restistry.clone()),
+            Arc::new(npm_registry.clone()),
+            Arc::new(NpmLatestResolver),
         ),
     );
 
@@ -98,6 +114,7 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(CargoTomlParser::new()),
             Arc::new(CratesVersionMatcher),
             Arc::new(CratesIoRegistry::default()),
+            Arc::new(CratesLatestResolver),
         ),
     );
 
@@ -107,6 +124,7 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(GoModParser::new()),
             Arc::new(GoVersionMatcher),
             Arc::new(GoProxyRegistry::default()),
+            Arc::new(GoLatestResolver),
         ),
     );
 
@@ -115,7 +133,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
         PackageResolver::new(
             Arc::new(PnpmWorkspaceParser),
             Arc::new(PnpmCatalogMatcher),
-            Arc::new(npm_restistry),
+            Arc::new(npm_registry),
+            Arc::new(PnpmCatalogLatestResolver),
         ),
     );
 
@@ -125,6 +144,7 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(DenoJsonParser::new()),
             Arc::new(JsrVersionMatcher),
             Arc::new(JsrRegistry::default()),
+            Arc::new(JsrLatestResolver),
         ),
     );
 

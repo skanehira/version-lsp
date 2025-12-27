@@ -13,13 +13,6 @@ use crate::version::cache::PackageId;
 /// Trait for storing and retrieving version information
 #[cfg_attr(test, automock)]
 pub trait VersionStorer: Send + Sync + 'static {
-    /// Get the latest version for a package
-    fn get_latest_version(
-        &self,
-        registry_type: RegistryType,
-        package_name: &str,
-    ) -> Result<Option<String>, CacheError>;
-
     /// Get all versions for a package
     fn get_versions(
         &self,
@@ -76,6 +69,13 @@ pub trait VersionStorer: Send + Sync + 'static {
         package_name: &str,
         dist_tags: &std::collections::HashMap<String, String>,
     ) -> Result<(), CacheError>;
+
+    /// Get all dist tags for a package
+    fn get_all_dist_tags(
+        &self,
+        registry_type: RegistryType,
+        package_name: &str,
+    ) -> Result<Option<std::collections::HashMap<String, String>>, CacheError>;
 
     /// Filter packages that are not in the cache
     /// Returns package names that have no entries in the cache
@@ -138,17 +138,24 @@ fn is_potential_dist_tag(version: &str) -> bool {
     KNOWN_DIST_TAGS.contains(&version.to_lowercase().as_str())
 }
 
+use crate::version::resolver::LatestVersionResolver;
+
 /// Compare the version status for a package
-pub fn compare_version<S: VersionStorer>(
+pub fn compare_version<S: VersionStorer + ?Sized, R: LatestVersionResolver + ?Sized>(
     storer: &S,
     matcher: &dyn VersionMatcher,
+    resolver: &R,
     package_name: &str,
     current_version: &str,
 ) -> Result<VersionCompareResult, CacheError> {
     let registry_type = matcher.registry_type();
 
-    // Get latest version from storer
-    let latest_version = storer.get_latest_version(registry_type, package_name)?;
+    // Get all versions and dist-tags from storer
+    let all_versions = storer.get_versions(registry_type, package_name)?;
+    let dist_tags = storer.get_all_dist_tags(registry_type, package_name)?;
+
+    // Use resolver to determine latest version
+    let latest_version = resolver.resolve_latest(&all_versions, dist_tags.as_ref());
 
     // If no versions in cache, return NotInCache
     let Some(latest) = latest_version else {
@@ -177,7 +184,6 @@ pub fn compare_version<S: VersionStorer>(
     };
 
     // Check if current version exists in registry
-    let all_versions = storer.get_versions(registry_type, package_name)?;
     let version_exists = matcher.version_exists(&resolved_version, &all_versions);
 
     // Compare versions
@@ -200,31 +206,28 @@ pub fn compare_version<S: VersionStorer>(
 mod tests {
     use super::*;
     use crate::version::matchers::GitHubActionsMatcher;
+    use crate::version::resolvers::GitHubActionsLatestResolver;
     use rstest::rstest;
 
     /// Mock storer for testing
     struct MockStorer {
-        latest_version: Option<String>,
         existing_versions: Vec<String>,
         dist_tags: std::collections::HashMap<String, String>,
     }
 
     impl MockStorer {
-        fn new(latest: Option<&str>, versions: Vec<&str>) -> Self {
+        fn new(versions: Vec<&str>) -> Self {
             Self {
-                latest_version: latest.map(|s| s.to_string()),
                 existing_versions: versions.into_iter().map(|s| s.to_string()).collect(),
                 dist_tags: std::collections::HashMap::new(),
             }
         }
 
         fn with_dist_tags(
-            latest: Option<&str>,
             versions: Vec<&str>,
             dist_tags: std::collections::HashMap<String, String>,
         ) -> Self {
             Self {
-                latest_version: latest.map(|s| s.to_string()),
                 existing_versions: versions.into_iter().map(|s| s.to_string()).collect(),
                 dist_tags,
             }
@@ -232,14 +235,6 @@ mod tests {
     }
 
     impl VersionStorer for MockStorer {
-        fn get_latest_version(
-            &self,
-            _registry_type: RegistryType,
-            _package_name: &str,
-        ) -> Result<Option<String>, CacheError> {
-            Ok(self.latest_version.clone())
-        }
-
         fn get_versions(
             &self,
             _registry_type: RegistryType,
@@ -304,6 +299,18 @@ mod tests {
             Ok(())
         }
 
+        fn get_all_dist_tags(
+            &self,
+            _registry_type: RegistryType,
+            _package_name: &str,
+        ) -> Result<Option<std::collections::HashMap<String, String>>, CacheError> {
+            if self.dist_tags.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(self.dist_tags.clone()))
+            }
+        }
+
         fn filter_packages_not_in_cache(
             &self,
             _registry_type: RegistryType,
@@ -315,33 +322,35 @@ mod tests {
     }
 
     #[rstest]
-    #[case("4.0.0", "4.0.0", vec!["4.0.0", "3.0.0"], VersionStatus::Latest)]
-    #[case("3.0.0", "4.0.0", vec!["4.0.0", "3.0.0"], VersionStatus::Outdated)]
-    #[case("5.0.0", "4.0.0", vec!["5.0.0", "4.0.0"], VersionStatus::Newer)]
-    #[case("1.0.0", "4.0.0", vec!["4.0.0", "3.0.0"], VersionStatus::NotFound)]
-    #[case("invalid", "4.0.0", vec!["4.0.0", "3.0.0"], VersionStatus::Invalid)]
+    #[case("v4.0.0", vec!["v3.0.0", "v4.0.0"], VersionStatus::Latest)]
+    #[case("v3.0.0", vec!["v3.0.0", "v4.0.0"], VersionStatus::Outdated)]
+    #[case("v5.0.0", vec!["v4.0.0", "v5.0.0"], VersionStatus::Latest)]
+    #[case("v1.0.0", vec!["v3.0.0", "v4.0.0"], VersionStatus::NotFound)]
+    #[case("invalid", vec!["v3.0.0", "v4.0.0"], VersionStatus::Invalid)]
     fn compare_version_returns_expected_status(
         #[case] current: &str,
-        #[case] latest: &str,
         #[case] existing: Vec<&str>,
         #[case] expected: VersionStatus,
     ) {
-        let storer = MockStorer::new(Some(latest), existing);
+        let storer = MockStorer::new(existing.clone());
         let matcher = GitHubActionsMatcher;
+        let resolver = GitHubActionsLatestResolver;
 
-        let result = compare_version(&storer, &matcher, "actions/checkout", current).unwrap();
+        let result =
+            compare_version(&storer, &matcher, &resolver, "actions/checkout", current).unwrap();
 
         assert_eq!(result.current_version, current);
-        assert_eq!(result.latest_version, Some(latest.to_string()));
         assert_eq!(result.status, expected);
     }
 
     #[test]
     fn compare_version_returns_not_in_cache_when_package_not_cached() {
-        let storer = MockStorer::new(None, vec![]);
+        let storer = MockStorer::new(vec![]);
         let matcher = GitHubActionsMatcher;
+        let resolver = GitHubActionsLatestResolver;
 
-        let result = compare_version(&storer, &matcher, "nonexistent/repo", "1.0.0").unwrap();
+        let result =
+            compare_version(&storer, &matcher, &resolver, "nonexistent/repo", "1.0.0").unwrap();
 
         assert_eq!(
             result,
@@ -355,25 +364,26 @@ mod tests {
 
     #[rstest]
     // Major only: v6 matches v6.0.0, v6.1.0, etc.
-    #[case("v6", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Latest)]
-    #[case("6", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Latest)]
-    #[case("v5", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Outdated)]
+    #[case("v6", vec!["v5.0.0", "v6.0.0"], VersionStatus::Latest)]
+    #[case("6", vec!["v5.0.0", "v6.0.0"], VersionStatus::Latest)]
+    #[case("v5", vec!["v5.0.0", "v6.0.0"], VersionStatus::Outdated)]
     // Major.minor: v6.1 matches v6.1.0, v6.1.5, etc.
-    #[case("v6.1", "v6.2.0", vec!["v6.2.0", "v6.1.0"], VersionStatus::Outdated)]
-    #[case("v6.2", "v6.2.0", vec!["v6.2.0", "v6.1.0"], VersionStatus::Latest)]
+    #[case("v6.1", vec!["v6.1.0", "v6.2.0"], VersionStatus::Outdated)]
+    #[case("v6.2", vec!["v6.1.0", "v6.2.0"], VersionStatus::Latest)]
     // Full version: exact match required
-    #[case("v6.0.0", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Latest)]
-    #[case("v5.0.0", "v6.0.0", vec!["v6.0.0", "v5.0.0"], VersionStatus::Outdated)]
+    #[case("v6.0.0", vec!["v5.0.0", "v6.0.0"], VersionStatus::Latest)]
+    #[case("v5.0.0", vec!["v5.0.0", "v6.0.0"], VersionStatus::Outdated)]
     fn compare_version_handles_partial_version_matching(
         #[case] current: &str,
-        #[case] latest: &str,
         #[case] existing: Vec<&str>,
         #[case] expected: VersionStatus,
     ) {
-        let storer = MockStorer::new(Some(latest), existing);
+        let storer = MockStorer::new(existing.clone());
         let matcher = GitHubActionsMatcher;
+        let resolver = GitHubActionsLatestResolver;
 
-        let result = compare_version(&storer, &matcher, "actions/checkout", current).unwrap();
+        let result =
+            compare_version(&storer, &matcher, &resolver, "actions/checkout", current).unwrap();
 
         assert_eq!(result.status, expected);
     }
@@ -381,18 +391,19 @@ mod tests {
     mod dist_tags {
         use super::*;
         use crate::version::matchers::NpmVersionMatcher;
+        use crate::version::resolvers::NpmLatestResolver;
 
         #[test]
         fn compare_version_resolves_latest_dist_tag_to_actual_version() {
             let mut dist_tags = std::collections::HashMap::new();
             dist_tags.insert("latest".to_string(), "4.17.21".to_string());
 
-            let storer =
-                MockStorer::with_dist_tags(Some("4.17.21"), vec!["4.17.20", "4.17.21"], dist_tags);
+            let storer = MockStorer::with_dist_tags(vec!["4.17.20", "4.17.21"], dist_tags);
             let matcher = NpmVersionMatcher;
+            let resolver = NpmLatestResolver;
 
             // "latest" should resolve to "4.17.21" which is the latest
-            let result = compare_version(&storer, &matcher, "lodash", "latest").unwrap();
+            let result = compare_version(&storer, &matcher, &resolver, "lodash", "latest").unwrap();
 
             assert_eq!(result.status, VersionStatus::Latest);
             assert_eq!(result.current_version, "latest");
@@ -401,17 +412,16 @@ mod tests {
         #[test]
         fn compare_version_resolves_beta_dist_tag() {
             let mut dist_tags = std::collections::HashMap::new();
+            dist_tags.insert("latest".to_string(), "4.17.21".to_string());
             dist_tags.insert("beta".to_string(), "5.0.0-beta.1".to_string());
 
-            let storer = MockStorer::with_dist_tags(
-                Some("4.17.21"), // Latest stable
-                vec!["4.17.20", "4.17.21", "5.0.0-beta.1"],
-                dist_tags,
-            );
+            let storer =
+                MockStorer::with_dist_tags(vec!["4.17.20", "4.17.21", "5.0.0-beta.1"], dist_tags);
             let matcher = NpmVersionMatcher;
+            let resolver = NpmLatestResolver;
 
             // "beta" should resolve to "5.0.0-beta.1" which is newer than latest stable
-            let result = compare_version(&storer, &matcher, "lodash", "beta").unwrap();
+            let result = compare_version(&storer, &matcher, &resolver, "lodash", "beta").unwrap();
 
             assert_eq!(result.status, VersionStatus::Newer);
             assert_eq!(result.current_version, "beta");
@@ -420,15 +430,15 @@ mod tests {
         #[test]
         fn compare_version_returns_not_in_cache_for_unresolved_dist_tag() {
             let storer = MockStorer::with_dist_tags(
-                Some("4.17.21"),
                 vec!["4.17.20", "4.17.21"],
                 std::collections::HashMap::new(), // No dist tags
             );
             let matcher = NpmVersionMatcher;
+            let resolver = NpmLatestResolver;
 
             // "latest" is a potential dist-tag, but we don't have dist-tag info
             // Return NotInCache to avoid confusing "Invalid version format" error
-            let result = compare_version(&storer, &matcher, "lodash", "latest").unwrap();
+            let result = compare_version(&storer, &matcher, &resolver, "lodash", "latest").unwrap();
 
             assert_eq!(result.status, VersionStatus::NotInCache);
         }
@@ -436,14 +446,14 @@ mod tests {
         #[test]
         fn compare_version_returns_not_in_cache_for_unresolved_beta_tag() {
             let storer = MockStorer::with_dist_tags(
-                Some("4.17.21"),
                 vec!["4.17.20", "4.17.21"],
                 std::collections::HashMap::new(), // No dist tags
             );
             let matcher = NpmVersionMatcher;
+            let resolver = NpmLatestResolver;
 
             // "beta" is a potential dist-tag that we can't resolve
-            let result = compare_version(&storer, &matcher, "lodash", "beta").unwrap();
+            let result = compare_version(&storer, &matcher, &resolver, "lodash", "beta").unwrap();
 
             assert_eq!(result.status, VersionStatus::NotInCache);
         }
@@ -451,14 +461,15 @@ mod tests {
         #[test]
         fn compare_version_returns_invalid_for_truly_invalid_version() {
             let storer = MockStorer::with_dist_tags(
-                Some("4.17.21"),
                 vec!["4.17.20", "4.17.21"],
                 std::collections::HashMap::new(),
             );
             let matcher = NpmVersionMatcher;
+            let resolver = NpmLatestResolver;
 
             // "invalid@#$" is not a valid semver and not a potential dist-tag
-            let result = compare_version(&storer, &matcher, "lodash", "invalid@#$").unwrap();
+            let result =
+                compare_version(&storer, &matcher, &resolver, "lodash", "invalid@#$").unwrap();
 
             assert_eq!(result.status, VersionStatus::Invalid);
         }

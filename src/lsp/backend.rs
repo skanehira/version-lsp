@@ -263,6 +263,7 @@ impl<S: VersionStorer> Backend<S> {
         let diagnostics = generate_diagnostics(
             &**resolver.parser(),
             &**resolver.matcher(),
+            &**resolver.version_resolver(),
             &**storer,
             &content,
         );
@@ -293,6 +294,7 @@ impl<S: VersionStorer> Backend<S> {
             let client = self.client.clone();
             let parser = resolver.parser().clone();
             let matcher = resolver.matcher().clone();
+            let version_resolver = resolver.version_resolver().clone();
 
             tokio::spawn(async move {
                 debug!("Background task started for fetching packages");
@@ -310,7 +312,13 @@ impl<S: VersionStorer> Backend<S> {
                         )
                         .await;
 
-                    let diagnostics = generate_diagnostics(&*parser, &*matcher, &*storer, &content);
+                    let diagnostics = generate_diagnostics(
+                        &*parser,
+                        &*matcher,
+                        &*version_resolver,
+                        &*storer,
+                        &content,
+                    );
 
                     client.publish_diagnostics(uri, diagnostics, None).await;
                 }
@@ -456,8 +464,19 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
         let actions = if package.registry_type == RegistryType::GitHubActions
             && package.commit_hash.is_some()
         {
+            let Some(resolver) = self.resolvers.get(&registry_type) else {
+                debug!("No resolver found for registry type: {:?}", registry_type);
+                return Ok(None);
+            };
             let sha_fetcher = GitHubRegistry::default();
-            generate_bump_code_actions_with_sha(&**storer, package, uri, &sha_fetcher).await
+            generate_bump_code_actions_with_sha(
+                &**storer,
+                &**resolver.version_resolver(),
+                package,
+                uri,
+                &sha_fetcher,
+            )
+            .await
         } else {
             generate_bump_code_actions(&**storer, package, uri)
         };
