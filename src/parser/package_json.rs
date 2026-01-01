@@ -149,6 +149,12 @@ impl PackageJsonParser {
             let key_name = self.get_string_value(key_node, content);
             let raw_version = self.get_string_value(value_node, content);
 
+            // Skip pnpm catalog references (e.g., "catalog:ag-grid" or "catalog:")
+            // These are resolved from pnpm-workspace.yaml, not version-checked here
+            if raw_version.starts_with("catalog:") {
+                continue;
+            }
+
             // Check for npm alias format: npm:package@version
             let (package_name, version) =
                 if let Some((name, ver)) = Self::parse_npm_alias(&raw_version) {
@@ -504,5 +510,35 @@ mod tests {
         // npm alias without version: name becomes "npm-package-arg", version is empty or "latest"
         assert_eq!(result[0].name, "npm-package-arg");
         assert_eq!(result[0].version, "latest");
+    }
+
+    #[test]
+    fn parse_skips_pnpm_catalog_references() {
+        let parser = PackageJsonParser::new();
+        let content = r#"{
+  "dependencies": {
+    "lodash": "4.17.21",
+    "ag-grid-community": "catalog:ag-grid",
+    "react": "^18.0.0"
+  }
+}"#;
+        let result = parser.parse(content).unwrap();
+        // Should only have lodash and react, not ag-grid-community with catalog reference
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "lodash");
+        assert_eq!(result[1].name, "react");
+    }
+
+    #[test]
+    fn parse_skips_pnpm_default_catalog_reference() {
+        let parser = PackageJsonParser::new();
+        let content = r#"{
+  "dependencies": {
+    "lodash": "catalog:"
+  }
+}"#;
+        let result = parser.parse(content).unwrap();
+        // Should be empty - default catalog reference is skipped
+        assert!(result.is_empty());
     }
 }
