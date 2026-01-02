@@ -403,9 +403,8 @@ impl VersionStorer for Cache {
         let conn = self.lock_conn()?;
 
         // Try to set fetching_since if:
-        // 1. Package doesn't exist (will be created by replace_versions later)
-        // 2. fetching_since is NULL (not being fetched)
-        // 3. fetching_since is older than timeout (previous fetch timed out)
+        // 1. fetching_since is NULL (not being fetched)
+        // 2. fetching_since is older than timeout (previous fetch timed out)
         let rows_affected = conn.execute(
             r#"
             UPDATE packages
@@ -420,15 +419,19 @@ impl VersionStorer for Cache {
             return Ok(true);
         }
 
-        // Package might not exist yet, check if we can proceed
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM packages WHERE registry_type = ?1 AND package_name = ?2)",
-            (registry_type, package_name),
-            |row| row.get(0),
+        // Package might not exist yet - try to insert with fetching_since set
+        // INSERT OR IGNORE ensures only the first caller succeeds for new packages
+        let rows_inserted = conn.execute(
+            r#"
+            INSERT OR IGNORE INTO packages (registry_type, package_name, updated_at, fetching_since)
+            VALUES (?1, ?2, ?3, ?4)
+            "#,
+            (registry_type, package_name, now, now),
         )?;
 
-        // If package doesn't exist, we can proceed (it will be created by replace_versions)
-        Ok(!exists)
+        // Only the first inserter can proceed (rows_inserted > 0)
+        // Subsequent callers get rows_inserted = 0 due to UNIQUE constraint
+        Ok(rows_inserted > 0)
     }
 
     fn finish_fetch(
