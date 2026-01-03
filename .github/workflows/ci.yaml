@@ -115,13 +115,6 @@ jobs:
         with:
           github_access_token: ${{ github.token }}
 
-      - uses: nix-community/cache-nix-action@b426b118b6dc86d6952988d396aa7c6b09776d08 # v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock', 'rust-toolchain.toml', '**/Cargo.toml', '**/Cargo.lock', '**/*.rs') }}
-          restore-prefixes-first-match: |
-            nix-${{ runner.os }}-
-          gc-max-store-size: 3G
-
       - name: Build with Nix
         run: nix build .#ci --print-build-logs
 
