@@ -32,20 +32,18 @@
           rustToolchainToml = pkgs.lib.importTOML ./rust-toolchain.toml;
           rustVersion = rustToolchainToml.toolchain.channel;
 
-          # Full toolchain from rust-toolchain.toml (for dev)
-          rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-          craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-
-          # Minimal toolchain (for CI build)
+          # Minimal toolchain (for build)
           rustToolchainMinimal = pkgs.rust-bin.stable.${rustVersion}.minimal;
           craneLibMinimal = (crane.mkLib pkgs).overrideToolchain rustToolchainMinimal;
+
+          # Full toolchain from rust-toolchain.toml (for dev)
+          rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
           commonArgs = {
             src = (crane.mkLib pkgs).cleanCargoSource ./.;
           };
 
-          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-          cargoArtifactsMinimal = craneLibMinimal.buildDepsOnly commonArgs;
+          cargoArtifacts = craneLibMinimal.buildDepsOnly commonArgs;
 
           meta = {
             description = "LSP for package version management";
@@ -55,19 +53,20 @@
         in
         {
           packages = {
-            default = craneLib.buildPackage (commonArgs // {
+            default = craneLibMinimal.buildPackage (commonArgs // {
               inherit cargoArtifacts meta;
             });
 
-            minimal = craneLibMinimal.buildPackage (commonArgs // {
-              cargoArtifacts = cargoArtifactsMinimal;
+            # CI build (skip tests)
+            ci = craneLibMinimal.buildPackage (commonArgs // {
+              inherit cargoArtifacts meta;
               doCheck = false;
-              inherit meta;
             });
           };
 
-          devShells.default = craneLib.devShell {
+          devShells.default = pkgs.mkShell {
             packages = [
+              rustToolchain
               pkgs.cargo-nextest
               pkgs.cargo-llvm-cov
             ];
