@@ -115,5 +115,7 @@ jobs:
         with:
           github_access_token: ${{ github.token }}
 
+      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
+
       - name: Build with Nix
         run: nix build .#minimal --print-build-logs
