@@ -19,7 +19,7 @@ tree-sitter-toml-ng = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
 # Async runtime
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
