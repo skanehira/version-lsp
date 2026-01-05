@@ -1,6 +1,6 @@
 [package]
 name = "version-lsp"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["skanehira"]
 edition = "2024"
 
@@ -16,7 +16,7 @@ tree-sitter-json = "0.24"
 tree-sitter-toml-ng = "0.7"
 
 # HTTP client
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }
