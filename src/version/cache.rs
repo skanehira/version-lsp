@@ -486,8 +486,16 @@ impl VersionStorer for Cache {
             .collect();
         let placeholders_str = placeholders.join(", ");
 
+        // Only consider packages with at least one version as "cached"
+        // Packages with 0 versions (e.g., due to failed fetch) should be re-fetched
         let query = format!(
-            "SELECT package_name FROM packages WHERE registry_type = ?1 AND package_name IN ({})",
+            r#"
+            SELECT p.package_name
+            FROM packages p
+            WHERE p.registry_type = ?1
+              AND p.package_name IN ({})
+              AND EXISTS (SELECT 1 FROM versions v WHERE v.package_id = p.id)
+            "#,
             placeholders_str
         );
 
@@ -971,5 +979,34 @@ mod tests {
 
         // Should return axios because it's not in CratesIo registry
         assert_eq!(not_in_cache, vec!["axios".to_string()]);
+    }
+
+    #[test]
+    fn filter_packages_not_in_cache_treats_zero_versions_as_not_cached() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400).unwrap();
+
+        // Simulate a failed fetch: package record exists but no versions
+        // This happens when try_start_fetch creates a record but fetch_all_versions fails
+        cache
+            .try_start_fetch(RegistryType::Npm, "failed-package")
+            .unwrap();
+        cache
+            .finish_fetch(RegistryType::Npm, "failed-package")
+            .unwrap();
+
+        // Add a package with versions for comparison
+        cache
+            .replace_versions(RegistryType::Npm, "axios", vec!["1.0.0".to_string()])
+            .unwrap();
+
+        let package_names = vec!["failed-package".to_string(), "axios".to_string()];
+        let not_in_cache = cache
+            .filter_packages_not_in_cache(RegistryType::Npm, &package_names)
+            .unwrap();
+
+        // Should return failed-package because it has 0 versions
+        assert_eq!(not_in_cache, vec!["failed-package".to_string()]);
     }
 }
