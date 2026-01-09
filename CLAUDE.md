@@ -66,6 +66,6 @@ cargo +nightly bench
 - **release.yaml**: Automated release on tag push (cross-platform builds via GoReleaser)
 
 ### Key Settings
-- **Rust version**: Fixed to 1.87 in `rust-toolchain.toml`
+- **Rust version**: Fixed to 1.92.0 in `rust-toolchain.toml`
 - **Edition**: Uses Rust 2024 edition
 - **Test tools**: cargo-nextest and cargo-llvm-cov recommended
