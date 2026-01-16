@@ -214,7 +214,7 @@ mod tests {
     fn create_test_cache() -> (TempDir, Arc<Cache>) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400000).unwrap();
+        let cache = Cache::new(&db_path, 86400000, false).unwrap();
         (temp_dir, Arc::new(cache))
     }
 
@@ -260,7 +260,7 @@ mod tests {
 
         // Verify versions were saved to cache
         let mut versions = cache
-            .get_versions("github_actions", "actions/checkout")
+            .get_versions(RegistryType::GitHubActions, "actions/checkout")
             .unwrap();
         versions.sort();
         assert_eq!(versions, vec!["v3.0.0", "v4.0.0"]);
@@ -308,13 +308,13 @@ mod tests {
 
         // First package should not be in cache
         let failing_versions = cache
-            .get_versions("github_actions", "failing/repo")
+            .get_versions(RegistryType::GitHubActions, "failing/repo")
             .unwrap();
         assert!(failing_versions.is_empty());
 
         // Second package should be saved
         let checkout_versions = cache
-            .get_versions("github_actions", "actions/checkout")
+            .get_versions(RegistryType::GitHubActions, "actions/checkout")
             .unwrap();
         assert_eq!(checkout_versions, vec!["v4.0.0"]);
     }
@@ -363,7 +363,7 @@ mod tests {
 
         // Verify versions were saved to cache
         let versions = cache
-            .get_versions("github_actions", "actions/checkout")
+            .get_versions(RegistryType::GitHubActions, "actions/checkout")
             .unwrap();
         assert!(!versions.is_empty());
     }
@@ -431,7 +431,7 @@ mod tests {
 
         // Verify only setup-node was fetched
         let setup_node_versions = cache
-            .get_versions("github_actions", "actions/setup-node")
+            .get_versions(RegistryType::GitHubActions, "actions/setup-node")
             .unwrap();
         assert!(!setup_node_versions.is_empty());
     }

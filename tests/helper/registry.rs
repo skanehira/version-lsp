@@ -110,7 +110,7 @@ pub fn create_test_cache(
 ) -> (TempDir, Arc<Cache>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
-    let cache = Cache::new(&db_path, 86400000).unwrap();
+    let cache = Cache::new(&db_path, 86400000, false).unwrap();
 
     for (package_name, package_versions) in versions {
         cache

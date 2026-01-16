@@ -56,7 +56,11 @@ impl Backend<Cache> {
             return None;
         }
 
-        match Cache::new(&db_path, config.cache.refresh_interval) {
+        match Cache::new(
+            &db_path,
+            config.cache.refresh_interval,
+            config.ignore_prerelease,
+        ) {
             Ok(cache) => {
                 info!("Cache initialized at {:?}", db_path);
                 Some(Arc::new(cache))
