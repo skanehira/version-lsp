@@ -15,11 +15,23 @@ pub const FETCH_TIMEOUT_MS: i64 = 30_000;
 pub const FETCH_STAGGER_DELAY_MS: u64 = 10;
 
 /// LSP configuration structure
-#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct LspConfig {
     pub cache: CacheConfig,
     pub registries: RegistriesConfig,
+    /// Whether to ignore prerelease versions when determining the latest version
+    pub ignore_prerelease: bool,
+}
+
+impl Default for LspConfig {
+    fn default() -> Self {
+        Self {
+            cache: CacheConfig::default(),
+            registries: RegistriesConfig::default(),
+            ignore_prerelease: true,
+        }
+    }
 }
 
 /// Cache-related configuration
@@ -140,7 +152,8 @@ mod tests {
                     github: RegistryConfig { enabled: true },
                     pnpm_catalog: RegistryConfig { enabled: false },
                     jsr: RegistryConfig { enabled: false },
-                }
+                },
+                ignore_prerelease: true,
             }
         );
     }

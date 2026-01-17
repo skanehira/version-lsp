@@ -358,7 +358,8 @@ pub trait Registry: Send + Sync {
       "crates": { "enabled": true },
       "goProxy": { "enabled": true },
       "github": { "enabled": true }
-    }
+    },
+    "ignorePrerelease": true
   }
 }
 ```

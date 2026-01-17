@@ -19,10 +19,15 @@ pub struct PackageId {
 pub struct Cache {
     conn: Mutex<Connection>,
     refresh_interval: i64,
+    ignore_prerelease: bool,
 }
 
 impl Cache {
-    pub fn new(db_path: &Path, refresh_interval: i64) -> Result<Self, CacheError> {
+    pub fn new(
+        db_path: &Path,
+        refresh_interval: i64,
+        ignore_prerelease: bool,
+    ) -> Result<Self, CacheError> {
         info!("Initializing cache database at {:?}", db_path);
 
         let conn = Connection::open(db_path)?;
@@ -36,6 +41,7 @@ impl Cache {
         let cache = Self {
             conn: Mutex::new(conn),
             refresh_interval,
+            ignore_prerelease,
         };
 
         cache.create_schema()?;
@@ -138,9 +144,10 @@ impl Cache {
 
     pub fn get_versions(
         &self,
-        registry_type: &str,
+        registry_type: RegistryType,
         package_name: &str,
     ) -> Result<Vec<String>, CacheError> {
+        let registry_type_str = registry_type.as_str();
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             r#"
@@ -151,7 +158,7 @@ impl Cache {
         )?;
 
         let versions = stmt
-            .query_map((registry_type, package_name), |row| row.get(0))?
+            .query_map((registry_type_str, package_name), |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
 
         Ok(versions)
@@ -160,7 +167,7 @@ impl Cache {
     /// Save dist tags for a package
     pub fn save_dist_tags(
         &self,
-        registry_type: &str,
+        registry_type: RegistryType,
         package_name: &str,
         dist_tags: &HashMap<String, String>,
     ) -> Result<(), CacheError> {
@@ -168,6 +175,7 @@ impl Cache {
             return Ok(());
         }
 
+        let registry_type_str = registry_type.as_str();
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction()?;
 
@@ -180,12 +188,12 @@ impl Cache {
             VALUES (?1, ?2, ?3)
             ON CONFLICT(registry_type, package_name) DO NOTHING
             "#,
-            (registry_type, package_name, now),
+            (registry_type_str, package_name, now),
         )?;
 
         let package_id: i64 = tx.query_row(
             "SELECT id FROM packages WHERE registry_type = ?1 AND package_name = ?2",
-            (registry_type, package_name),
+            (registry_type_str, package_name),
             |row| row.get(0),
         )?;
 
@@ -208,10 +216,11 @@ impl Cache {
     /// Get a specific dist tag for a package
     pub fn get_dist_tag(
         &self,
-        registry_type: &str,
+        registry_type: RegistryType,
         package_name: &str,
         tag_name: &str,
     ) -> Result<Option<String>, CacheError> {
+        let registry_type_str = registry_type.as_str();
         let conn = self.lock_conn()?;
         let result = conn.query_row(
             r#"
@@ -219,7 +228,7 @@ impl Cache {
             JOIN packages p ON dt.package_id = p.id
             WHERE p.registry_type = ?1 AND p.package_name = ?2 AND dt.tag_name = ?3
             "#,
-            (registry_type, package_name, tag_name),
+            (registry_type_str, package_name, tag_name),
             |row| row.get(0),
         );
 
@@ -237,7 +246,6 @@ impl VersionStorer for Cache {
         registry_type: RegistryType,
         package_name: &str,
     ) -> Result<Option<String>, CacheError> {
-        let registry_type = registry_type.as_str();
         let conn = self.lock_conn()?;
 
         // First, try to get the "latest" dist-tag (for npm packages)
@@ -247,7 +255,7 @@ impl VersionStorer for Cache {
             JOIN packages p ON dt.package_id = p.id
             WHERE p.registry_type = ?1 AND p.package_name = ?2 AND dt.tag_name = 'latest'
             "#,
-            (registry_type, package_name),
+            (registry_type.as_str(), package_name),
             |row| row.get::<_, String>(0),
         );
 
@@ -255,24 +263,30 @@ impl VersionStorer for Cache {
             return Ok(Some(version));
         }
 
-        // Fall back to the last inserted version (for registries without dist-tags)
-        let result = conn.query_row(
-            r#"
-            SELECT v.version FROM versions v
-            JOIN packages p ON v.package_id = p.id
-            WHERE p.registry_type = ?1 AND p.package_name = ?2
-            ORDER BY v.id DESC
-            LIMIT 1
-            "#,
-            (registry_type, package_name),
-            |row| row.get(0),
-        );
+        // For registries without dist-tags (GitHub Actions, Go, etc.),
+        // find the semantically highest version
+        drop(conn); // Release lock before calling get_versions
+        let versions = Cache::get_versions(self, registry_type, package_name)?;
 
-        match result {
-            Ok(version) => Ok(Some(version)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
+        if versions.is_empty() {
+            return Ok(None);
         }
+
+        // Find the semantically highest version
+        let latest = versions
+            .into_iter()
+            .filter_map(|v| {
+                let parsed = crate::version::semver::parse_version(&v)?;
+                // Skip prerelease versions if ignore_prerelease is enabled
+                if self.ignore_prerelease && !parsed.pre.is_empty() {
+                    return None;
+                }
+                Some((v, parsed))
+            })
+            .max_by(|(_, a), (_, b)| a.cmp(b))
+            .map(|(v, _)| v);
+
+        Ok(latest)
     }
 
     fn get_versions(
@@ -280,7 +294,7 @@ impl VersionStorer for Cache {
         registry_type: RegistryType,
         package_name: &str,
     ) -> Result<Vec<String>, CacheError> {
-        Cache::get_versions(self, registry_type.as_str(), package_name)
+        Cache::get_versions(self, registry_type, package_name)
     }
 
     fn version_exists(
@@ -456,7 +470,7 @@ impl VersionStorer for Cache {
         package_name: &str,
         tag_name: &str,
     ) -> Result<Option<String>, CacheError> {
-        Cache::get_dist_tag(self, registry_type.as_str(), package_name, tag_name)
+        Cache::get_dist_tag(self, registry_type, package_name, tag_name)
     }
 
     fn save_dist_tags(
@@ -465,7 +479,7 @@ impl VersionStorer for Cache {
         package_name: &str,
         dist_tags: &HashMap<String, String>,
     ) -> Result<(), CacheError> {
-        Cache::save_dist_tags(self, registry_type.as_str(), package_name, dist_tags)
+        Cache::save_dist_tags(self, registry_type, package_name, dist_tags)
     }
 
     fn filter_packages_not_in_cache(
@@ -533,7 +547,7 @@ mod tests {
     fn replace_versions_creates_new_package() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         let versions = vec![
             "1.0.0".to_string(),
@@ -544,7 +558,7 @@ mod tests {
             .replace_versions(RegistryType::Npm, "axios", versions.clone())
             .unwrap();
 
-        let saved = cache.get_versions("npm", "axios").unwrap();
+        let saved = cache.get_versions(RegistryType::Npm, "axios").unwrap();
         assert_eq!(saved, versions);
     }
 
@@ -552,7 +566,7 @@ mod tests {
     fn replace_versions_updates_existing_package() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         let initial_versions = vec!["1.0.0".to_string()];
         cache
@@ -564,7 +578,7 @@ mod tests {
             .replace_versions(RegistryType::Npm, "axios", new_versions.clone())
             .unwrap();
 
-        let saved = cache.get_versions("npm", "axios").unwrap();
+        let saved = cache.get_versions(RegistryType::Npm, "axios").unwrap();
         assert_eq!(saved, new_versions);
     }
 
@@ -572,7 +586,7 @@ mod tests {
     fn replace_versions_adds_only_new_versions() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Initial versions
         let initial_versions = vec!["1.0.0".to_string(), "1.1.0".to_string()];
@@ -592,7 +606,7 @@ mod tests {
             .unwrap();
 
         // Verify all versions are present (no duplicates)
-        let mut saved = cache.get_versions("npm", "axios").unwrap();
+        let mut saved = cache.get_versions(RegistryType::Npm, "axios").unwrap();
         saved.sort();
         assert_eq!(
             saved,
@@ -609,9 +623,11 @@ mod tests {
     fn get_versions_returns_empty_for_nonexistent_package() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
-        let versions = cache.get_versions("npm", "nonexistent").unwrap();
+        let versions = cache
+            .get_versions(RegistryType::Npm, "nonexistent")
+            .unwrap();
         assert!(versions.is_empty());
     }
 
@@ -619,7 +635,7 @@ mod tests {
     fn get_versions_performance_with_1000_versions() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         let versions: Vec<String> = (0..1000).map(|i| format!("{}.0.0", i)).collect();
         cache
@@ -627,7 +643,9 @@ mod tests {
             .unwrap();
 
         let start = std::time::Instant::now();
-        let retrieved = cache.get_versions("npm", "large-package").unwrap();
+        let retrieved = cache
+            .get_versions(RegistryType::Npm, "large-package")
+            .unwrap();
         let elapsed = start.elapsed();
 
         assert_eq!(retrieved.len(), 1000);
@@ -652,7 +670,7 @@ mod tests {
     ) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         let versions = vec!["1.0.0".to_string(), "2.0.0".to_string()];
         cache
@@ -678,7 +696,7 @@ mod tests {
     ) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         let versions = vec![
             "1.0.0".to_string(),
@@ -702,7 +720,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         // refresh_interval = 100ms
-        let cache = Cache::new(&db_path, 100).unwrap();
+        let cache = Cache::new(&db_path, 100, false).unwrap();
 
         cache
             .replace_versions(RegistryType::Npm, "axios", vec!["1.0.0".to_string()])
@@ -731,7 +749,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         // refresh_interval = 1 hour (in ms)
-        let cache = Cache::new(&db_path, 3600000).unwrap();
+        let cache = Cache::new(&db_path, 3600000, false).unwrap();
 
         cache
             .replace_versions(RegistryType::Npm, "axios", vec!["1.0.0".to_string()])
@@ -745,7 +763,7 @@ mod tests {
     fn try_start_fetch_returns_true_for_new_package() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // New package not in DB should allow fetch
         let can_fetch = cache
@@ -758,7 +776,7 @@ mod tests {
     fn try_start_fetch_returns_true_for_package_not_being_fetched() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Pre-populate cache (fetching_since is NULL after replace_versions)
         cache
@@ -774,7 +792,7 @@ mod tests {
     fn try_start_fetch_returns_false_for_package_being_fetched() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Pre-populate cache
         cache
@@ -794,7 +812,7 @@ mod tests {
     fn finish_fetch_clears_fetching_state() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Pre-populate cache
         cache
@@ -817,27 +835,37 @@ mod tests {
     fn save_and_get_dist_tags() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         let mut dist_tags = std::collections::HashMap::new();
         dist_tags.insert("latest".to_string(), "4.17.21".to_string());
         dist_tags.insert("beta".to_string(), "5.0.0-beta.1".to_string());
 
-        cache.save_dist_tags("npm", "lodash", &dist_tags).unwrap();
+        cache
+            .save_dist_tags(RegistryType::Npm, "lodash", &dist_tags)
+            .unwrap();
 
         // Get specific dist-tag
-        let latest = cache.get_dist_tag("npm", "lodash", "latest").unwrap();
+        let latest = cache
+            .get_dist_tag(RegistryType::Npm, "lodash", "latest")
+            .unwrap();
         assert_eq!(latest, Some("4.17.21".to_string()));
 
-        let beta = cache.get_dist_tag("npm", "lodash", "beta").unwrap();
+        let beta = cache
+            .get_dist_tag(RegistryType::Npm, "lodash", "beta")
+            .unwrap();
         assert_eq!(beta, Some("5.0.0-beta.1".to_string()));
 
         // Non-existent tag
-        let unknown = cache.get_dist_tag("npm", "lodash", "unknown").unwrap();
+        let unknown = cache
+            .get_dist_tag(RegistryType::Npm, "lodash", "unknown")
+            .unwrap();
         assert_eq!(unknown, None);
 
         // Non-existent package
-        let no_pkg = cache.get_dist_tag("npm", "nonexistent", "latest").unwrap();
+        let no_pkg = cache
+            .get_dist_tag(RegistryType::Npm, "nonexistent", "latest")
+            .unwrap();
         assert_eq!(no_pkg, None);
     }
 
@@ -845,7 +873,7 @@ mod tests {
     fn get_latest_version_prefers_dist_tag_latest_over_last_inserted() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Insert versions in order: stable versions first, then pre-release
         // This simulates npm's time-based ordering where pre-release comes last
@@ -863,7 +891,7 @@ mod tests {
         dist_tags.insert("latest".to_string(), "4.17.21".to_string());
         dist_tags.insert("insiders".to_string(), "0.0.0-insiders.abc123".to_string());
         cache
-            .save_dist_tags("npm", "tailwindcss", &dist_tags)
+            .save_dist_tags(RegistryType::Npm, "tailwindcss", &dist_tags)
             .unwrap();
 
         // get_latest_version should return dist-tags.latest, not the last inserted version
@@ -877,7 +905,7 @@ mod tests {
     fn get_latest_version_falls_back_to_last_inserted_when_no_dist_tag() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Insert versions without dist-tags (like GitHub Actions)
         let versions = vec!["v3.0.0".to_string(), "v4.0.0".to_string()];
@@ -896,7 +924,7 @@ mod tests {
     fn filter_packages_not_in_cache_returns_only_missing_packages() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Add some packages to cache
         cache
@@ -929,7 +957,7 @@ mod tests {
     fn filter_packages_not_in_cache_returns_empty_when_all_cached() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         cache
             .replace_versions(RegistryType::Npm, "axios", vec!["1.0.0".to_string()])
@@ -947,7 +975,7 @@ mod tests {
     fn filter_packages_not_in_cache_returns_all_when_none_cached() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         let package_names = vec!["express".to_string(), "react".to_string()];
         let not_in_cache = cache
@@ -964,7 +992,7 @@ mod tests {
     fn filter_packages_not_in_cache_respects_registry_type() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Add package to npm registry
         cache
@@ -985,7 +1013,7 @@ mod tests {
     fn filter_packages_not_in_cache_treats_zero_versions_as_not_cached() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let cache = Cache::new(&db_path, 86400).unwrap();
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
 
         // Simulate a failed fetch: package record exists but no versions
         // This happens when try_start_fetch creates a record but fetch_all_versions fails
@@ -1008,5 +1036,105 @@ mod tests {
 
         // Should return failed-package because it has 0 versions
         assert_eq!(not_in_cache, vec!["failed-package".to_string()]);
+    }
+
+    #[test]
+    fn get_latest_version_filters_prerelease_when_enabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400, true).unwrap(); // ignore_prerelease = true
+
+        let versions = vec![
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            "3.0.0-alpha".to_string(), // prerelease (highest but filtered)
+        ];
+        cache
+            .replace_versions(RegistryType::GitHubActions, "actions/checkout", versions)
+            .unwrap();
+
+        let latest = cache
+            .get_latest_version(RegistryType::GitHubActions, "actions/checkout")
+            .unwrap();
+        assert_eq!(latest, Some("2.0.0".to_string())); // highest stable version
+    }
+
+    #[test]
+    fn get_latest_version_includes_prerelease_when_disabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400, false).unwrap(); // ignore_prerelease = false
+
+        let versions = vec![
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            "3.0.0-alpha".to_string(), // prerelease
+        ];
+        cache
+            .replace_versions(RegistryType::GitHubActions, "actions/checkout", versions)
+            .unwrap();
+
+        let latest = cache
+            .get_latest_version(RegistryType::GitHubActions, "actions/checkout")
+            .unwrap();
+        assert_eq!(latest, Some("3.0.0-alpha".to_string())); // includes prerelease
+    }
+
+    #[test]
+    fn get_latest_version_returns_none_when_all_versions_are_prerelease_and_filtering_enabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400, true).unwrap(); // ignore_prerelease = true
+
+        let versions = vec!["1.0.0-alpha".to_string(), "1.0.0-beta".to_string()];
+        cache
+            .replace_versions(RegistryType::GitHubActions, "actions/checkout", versions)
+            .unwrap();
+
+        let latest = cache
+            .get_latest_version(RegistryType::GitHubActions, "actions/checkout")
+            .unwrap();
+        assert_eq!(latest, None); // all prerelease, so None
+    }
+
+    #[test]
+    fn get_latest_version_filters_go_pseudo_version_when_prerelease_filtering_enabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400, true).unwrap(); // ignore_prerelease = true
+
+        let versions = vec![
+            "v1.0.0".to_string(),
+            "v0.0.0-20210201000000-abc123".to_string(), // pseudo-version (prerelease)
+        ];
+        cache
+            .replace_versions(RegistryType::GoProxy, "github.com/example/module", versions)
+            .unwrap();
+
+        let latest = cache
+            .get_latest_version(RegistryType::GoProxy, "github.com/example/module")
+            .unwrap();
+        // pseudo-version is also filtered as prerelease
+        assert_eq!(latest, Some("v1.0.0".to_string()));
+    }
+
+    #[test]
+    fn get_latest_version_filters_go_regular_prerelease_when_enabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400, true).unwrap(); // ignore_prerelease = true
+
+        let versions = vec![
+            "v1.0.0".to_string(),
+            "v2.0.0-alpha".to_string(), // regular prerelease
+        ];
+        cache
+            .replace_versions(RegistryType::GoProxy, "github.com/example/module", versions)
+            .unwrap();
+
+        let latest = cache
+            .get_latest_version(RegistryType::GoProxy, "github.com/example/module")
+            .unwrap();
+        assert_eq!(latest, Some("v1.0.0".to_string())); // alpha is filtered
     }
 }

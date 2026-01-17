@@ -110,6 +110,14 @@ pub fn calculate_latest_major(
     }
 }
 
+/// Check if a version string is a prerelease version.
+/// Returns true if the version has a prerelease suffix (e.g., -alpha, -beta, -rc).
+pub fn is_prerelease(version: &str) -> bool {
+    parse_version(version)
+        .map(|v| !v.pre.is_empty())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,5 +194,64 @@ mod tests {
             calculate_latest_major(current, &available_strings),
             expected
         );
+    }
+
+    // npm / crates.io / JSR / pnpm format
+    #[rstest]
+    #[case("1.0.0", false)] // stable version
+    #[case("1.0.0-alpha", true)] // alpha
+    #[case("1.0.0-alpha.1", true)] // alpha with number
+    #[case("1.0.0-beta", true)] // beta
+    #[case("1.0.0-beta.1", true)] // beta with number
+    #[case("1.0.0-rc.1", true)] // release candidate
+    #[case("1.0.0-canary.123", true)] // canary
+    #[case("0.0.0-insiders.abc123", true)] // insiders
+    #[case("1.0.0+build", false)] // build metadata only (not prerelease)
+    #[case("1.0.0-alpha+build", true)] // prerelease + build metadata
+    fn test_is_prerelease_npm_format(#[case] version: &str, #[case] expected: bool) {
+        assert_eq!(is_prerelease(version), expected);
+    }
+
+    // GitHub Actions format (v prefix)
+    #[rstest]
+    #[case("v1.0.0", false)] // stable with v
+    #[case("v1.0.0-alpha", true)] // alpha with v
+    #[case("v1.0.0-beta.1", true)] // beta with v
+    #[case("v1.0.0-rc.1", true)] // rc with v
+    fn test_is_prerelease_github_actions_format(#[case] version: &str, #[case] expected: bool) {
+        assert_eq!(is_prerelease(version), expected);
+    }
+
+    // Go format (including pseudo-versions)
+    #[rstest]
+    #[case("v1.0.0", false)] // stable
+    #[case("v1.0.0-alpha", true)] // alpha
+    #[case("v1.0.0-beta.1", true)] // beta
+    #[case("v0.0.0-20210101000000-abc123", true)] // pseudo-version
+    #[case("v1.1.3-0.20240916144458-20a13a1f6b7c", true)] // pseudo-version with base
+    #[case("v2.0.0+incompatible", false)] // +incompatible is not prerelease
+    #[case("v2.0.0-preview.4+incompatible", true)] // prerelease with +incompatible
+    fn test_is_prerelease_go_format(#[case] version: &str, #[case] expected: bool) {
+        assert_eq!(is_prerelease(version), expected);
+    }
+
+    // Edge cases
+    #[rstest]
+    #[case("invalid", false)] // invalid version
+    #[case("", false)] // empty string
+    #[case("1", false)] // partial version
+    #[case("1.2", false)] // partial version
+    fn test_is_prerelease_edge_cases(#[case] version: &str, #[case] expected: bool) {
+        assert_eq!(is_prerelease(version), expected);
+    }
+
+    #[test]
+    fn parse_version_correctly_extracts_prerelease_from_go_incompatible() {
+        let version = parse_version("v2.0.0-preview.4+incompatible").unwrap();
+        assert_eq!(version.major, 2);
+        assert_eq!(version.minor, 0);
+        assert_eq!(version.patch, 0);
+        assert!(!version.pre.is_empty(), "prerelease should not be empty");
+        assert_eq!(version.pre.as_str(), "preview.4");
     }
 }

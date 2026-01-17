@@ -29,7 +29,7 @@ A Language Server Protocol (LSP) implementation that provides version checking d
 ## Supported Files
 
 | File                                                  | Registry        |
-|-------------------------------------------------------|-----------------|
+| ----------------------------------------------------- | --------------- |
 | `package.json`                                        | npm             |
 | `pnpm-workspace.yaml`                                 | npm             |
 | `Cargo.toml`                                          | crates.io       |
@@ -115,6 +115,7 @@ lspconfig.version_lsp.setup({
         github = { enabled = true },
         pnpmCatalog = { enabled = true },
       },
+      ignorePrerelease = true,  -- Ignore prerelease versions (default: true)
     },
   },
 })
@@ -122,14 +123,15 @@ lspconfig.version_lsp.setup({
 
 ### Configuration Options
 
-| Option                       | Type    | Default    | Description                                                |
-|------------------------------|---------|------------|------------------------------------------------------------|
-| `cache.refreshInterval`      | number  | `86400000` | Cache refresh interval in milliseconds (default: 24 hours) |
-| `registries.npm.enabled`     | boolean | `true`     | Enable npm registry checks                                 |
-| `registries.crates.enabled`  | boolean | `true`     | Enable crates.io registry checks                           |
-| `registries.goProxy.enabled` | boolean | `true`     | Enable Go Proxy registry checks                            |
-| `registries.github.enabled`  | boolean | `true`     | Enable GitHub Releases checks                              |
-| `registries.pnpmCatalog.enabled` | boolean | `true` | Enable pnpm catalog checks                                 |
+| Option                           | Type    | Default    | Description                                                |
+| -------------------------------- | ------- | ---------- | ---------------------------------------------------------- |
+| `cache.refreshInterval`          | number  | `86400000` | Cache refresh interval in milliseconds (default: 24 hours) |
+| `registries.npm.enabled`         | boolean | `true`     | Enable npm registry checks                                 |
+| `registries.crates.enabled`      | boolean | `true`     | Enable crates.io registry checks                           |
+| `registries.goProxy.enabled`     | boolean | `true`     | Enable Go Proxy registry checks                            |
+| `registries.github.enabled`      | boolean | `true`     | Enable GitHub Releases checks                              |
+| `registries.pnpmCatalog.enabled` | boolean | `true`     | Enable pnpm catalog checks                                 |
+| `ignorePrerelease`               | boolean | `true`     | Ignore prerelease versions (alpha, beta, rc, etc.)         |
 
 ## Data Storage
 
