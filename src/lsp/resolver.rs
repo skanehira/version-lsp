@@ -12,18 +12,20 @@ use crate::parser::github_actions::GitHubActionsParser;
 use crate::parser::go_mod::GoModParser;
 use crate::parser::package_json::PackageJsonParser;
 use crate::parser::pnpm_workspace::PnpmWorkspaceParser;
+use crate::parser::pyproject_toml::PyprojectTomlParser;
 use crate::parser::traits::Parser;
 use crate::parser::types::RegistryType;
 use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
     CratesVersionMatcher, GitHubActionsMatcher, GoVersionMatcher, JsrVersionMatcher,
-    NpmVersionMatcher, PnpmCatalogMatcher,
+    NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
 };
 use crate::version::registries::crates_io::CratesIoRegistry;
 use crate::version::registries::github::GitHubRegistry;
 use crate::version::registries::go_proxy::GoProxyRegistry;
 use crate::version::registries::jsr::JsrRegistry;
 use crate::version::registries::npm::NpmRegistry;
+use crate::version::registries::pypi::PypiRegistry;
 use crate::version::registry::Registry;
 
 /// Groups all components needed to resolve and validate package versions for a specific registry.
@@ -125,6 +127,15 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(DenoJsonParser::new()),
             Arc::new(JsrVersionMatcher),
             Arc::new(JsrRegistry::default()),
+        ),
+    );
+
+    resolvers.insert(
+        RegistryType::PyPI,
+        PackageResolver::new(
+            Arc::new(PyprojectTomlParser::new()),
+            Arc::new(PypiVersionMatcher),
+            Arc::new(PypiRegistry::default()),
         ),
     );
 

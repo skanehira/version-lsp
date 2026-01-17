@@ -15,6 +15,8 @@ pub enum RegistryType {
     PnpmCatalog,
     /// JSR (deno.json, deno.jsonc)
     Jsr,
+    /// PyPI (pyproject.toml)
+    PyPI,
 }
 
 impl RegistryType {
@@ -27,6 +29,7 @@ impl RegistryType {
             RegistryType::GoProxy => "go_proxy",
             RegistryType::PnpmCatalog => "pnpm_catalog",
             RegistryType::Jsr => "jsr",
+            RegistryType::PyPI => "pypi",
         }
     }
 }
@@ -42,6 +45,7 @@ impl std::str::FromStr for RegistryType {
             "go_proxy" => Ok(RegistryType::GoProxy),
             "pnpm_catalog" => Ok(RegistryType::PnpmCatalog),
             "jsr" => Ok(RegistryType::Jsr),
+            "pypi" => Ok(RegistryType::PyPI),
             _ => Err(()),
         }
     }
@@ -61,6 +65,8 @@ pub fn detect_parser_type(uri: &str) -> Option<RegistryType> {
         Some(RegistryType::PnpmCatalog)
     } else if uri.ends_with("/deno.json") || uri.ends_with("/deno.jsonc") {
         Some(RegistryType::Jsr)
+    } else if uri.ends_with("/pyproject.toml") {
+        Some(RegistryType::PyPI)
     } else {
         None
     }
@@ -195,6 +201,9 @@ mod tests {
     #[case("/path/to/deno.jsonc", Some(RegistryType::Jsr))]
     #[case("/project/deno.jsonc", Some(RegistryType::Jsr))]
     #[case("file:///home/user/deno.jsonc", Some(RegistryType::Jsr))]
+    #[case("/path/to/pyproject.toml", Some(RegistryType::PyPI))]
+    #[case("/project/pyproject.toml", Some(RegistryType::PyPI))]
+    #[case("file:///home/user/pyproject.toml", Some(RegistryType::PyPI))]
     #[case("workflow.yml", None)]
     #[case("random.txt", None)]
     fn detect_parser_type_returns_expected(
