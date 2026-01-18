@@ -27,6 +27,7 @@ serde_json = "1.0"
 
 # Version management
 semver = "1.0"
+pep508_rs = "0.9"
 
 # Date/Time
 chrono = "0.4"

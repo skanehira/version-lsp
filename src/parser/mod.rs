@@ -7,6 +7,7 @@
 //! - go_mod.rs: go.mod parser
 //! - pnpm_workspace.rs: pnpm-workspace.yaml catalog parser
 //! - deno_json.rs: deno.json parser
+//! - pyproject_toml.rs: pyproject.toml parser
 
 pub mod cargo_toml;
 pub mod deno_json;
@@ -14,6 +15,7 @@ pub mod github_actions;
 pub mod go_mod;
 pub mod package_json;
 pub mod pnpm_workspace;
+pub mod pyproject_toml;
 pub mod traits;
 pub mod types;
 
@@ -23,5 +25,6 @@ pub use github_actions::GitHubActionsParser;
 pub use go_mod::GoModParser;
 pub use package_json::PackageJsonParser;
 pub use pnpm_workspace::PnpmWorkspaceParser;
+pub use pyproject_toml::PyprojectTomlParser;
 pub use traits::{ParseError, Parser};
 pub use types::{PackageInfo, RegistryType};

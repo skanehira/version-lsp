@@ -62,6 +62,7 @@ pub struct RegistriesConfig {
     #[serde(rename = "pnpmCatalog")]
     pub pnpm_catalog: RegistryConfig,
     pub jsr: RegistryConfig,
+    pub pypi: RegistryConfig,
 }
 
 /// Individual registry configuration
@@ -134,7 +135,8 @@ mod tests {
                 "goProxy": { "enabled": false },
                 "github": { "enabled": true },
                 "pnpmCatalog": { "enabled": false },
-                "jsr": { "enabled": false }
+                "jsr": { "enabled": false },
+                "pypi": { "enabled": true }
             }
         }))
         .unwrap();
@@ -152,6 +154,7 @@ mod tests {
                     github: RegistryConfig { enabled: true },
                     pnpm_catalog: RegistryConfig { enabled: false },
                     jsr: RegistryConfig { enabled: false },
+                    pypi: RegistryConfig { enabled: true },
                 },
                 ignore_prerelease: true,
             }
