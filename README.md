@@ -83,6 +83,25 @@ nix run github:skanehira/version-lsp
 
 ## Editor Setup
 
+### Neovim (vim.lsp)
+
+Available in Neovim >= 0.11
+
+```lua
+vim.lsp.config('version_lsp', {
+  cmd = { 'version-lsp' },
+  filetypes = { 'json', 'toml', 'gomod', 'yaml' },
+  root_markers = { '.git' },
+  settings = {
+    ["version-lsp"] = {
+      -- See 'Configuration Options' section below for details
+    },
+  },
+})
+
+vim.lsp.enable('version_lsp')
+```
+
 ### Neovim (nvim-lspconfig)
 
 ```lua
