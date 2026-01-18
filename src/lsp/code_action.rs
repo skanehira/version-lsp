@@ -476,6 +476,14 @@ mod tests {
         ) -> Result<Vec<String>, CacheError> {
             Ok(vec![])
         }
+
+        fn mark_not_found(
+            &self,
+            _registry_type: RegistryType,
+            _package_name: &str,
+        ) -> Result<(), CacheError> {
+            Ok(())
+        }
     }
 
     #[test]

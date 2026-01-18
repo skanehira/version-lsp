@@ -84,6 +84,14 @@ pub trait VersionStorer: Send + Sync + 'static {
         registry_type: RegistryType,
         package_names: &[String],
     ) -> Result<Vec<String>, CacheError>;
+
+    /// Mark a package as not found (does not exist in registry)
+    /// This prevents repeated fetch attempts for non-existent packages
+    fn mark_not_found(
+        &self,
+        registry_type: RegistryType,
+        package_name: &str,
+    ) -> Result<(), CacheError>;
 }
 
 /// Result of version comparison
@@ -311,6 +319,14 @@ mod tests {
         ) -> Result<Vec<String>, CacheError> {
             // Return all packages as not in cache (mock behavior)
             Ok(package_names.to_vec())
+        }
+
+        fn mark_not_found(
+            &self,
+            _registry_type: RegistryType,
+            _package_name: &str,
+        ) -> Result<(), CacheError> {
+            Ok(())
         }
     }
 

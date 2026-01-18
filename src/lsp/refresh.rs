@@ -10,6 +10,7 @@ use crate::config::FETCH_STAGGER_DELAY_MS;
 use crate::parser::types::{PackageInfo, RegistryType};
 use crate::version::cache::PackageId;
 use crate::version::checker::VersionStorer;
+use crate::version::error::RegistryError;
 use crate::version::registry::Registry;
 
 /// Fetch and cache a single package's versions
@@ -84,6 +85,21 @@ async fn fetch_and_cache_package<S: VersionStorer>(
             } else {
                 false
             }
+        }
+        Err(RegistryError::NotFound(_)) => {
+            info!(
+                "Package not found: {}/{}. Marking as not found to skip future fetches.",
+                registry_type_str, package_name
+            );
+            let _ = storer
+                .mark_not_found(registry_type, package_name)
+                .inspect_err(|e| {
+                    error!(
+                        "Failed to mark {}/{} as not found: {}",
+                        registry_type_str, package_name, e
+                    )
+                });
+            false
         }
         Err(e) => {
             error!(

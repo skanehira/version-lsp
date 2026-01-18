@@ -16,6 +16,15 @@ pub struct PackageId {
     pub package_name: String,
 }
 
+/// Schema migrations
+/// Each version contains a list of SQL statements to execute
+const MIGRATIONS: &[&[&str]] = &[
+    // v1: fetching_since column
+    &["ALTER TABLE packages ADD COLUMN fetching_since INTEGER"],
+    // v2: not_found column
+    &["ALTER TABLE packages ADD COLUMN not_found INTEGER NOT NULL DEFAULT 0"],
+];
+
 pub struct Cache {
     conn: Mutex<Connection>,
     refresh_interval: i64,
@@ -68,6 +77,7 @@ impl Cache {
 
         let conn = self.lock_conn()?;
 
+        // Create base tables (without migration columns)
         conn.execute(
             r#"
             CREATE TABLE IF NOT EXISTS packages (
@@ -75,26 +85,11 @@ impl Cache {
                 registry_type TEXT NOT NULL,
                 package_name TEXT NOT NULL,
                 updated_at INTEGER NOT NULL,
-                fetching_since INTEGER,
                 UNIQUE(registry_type, package_name)
             )
             "#,
             [],
         )?;
-
-        // Migration: Add fetching_since column if it doesn't exist
-        let has_fetching_since: bool = conn
-            .query_row(
-                "SELECT COUNT(*) > 0 FROM pragma_table_info('packages') WHERE name = 'fetching_since'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if !has_fetching_since {
-            conn.execute("ALTER TABLE packages ADD COLUMN fetching_since INTEGER", [])?;
-            debug!("Added fetching_since column to packages table");
-        }
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_updated_at ON packages(updated_at)",
@@ -138,7 +133,44 @@ impl Cache {
             [],
         )?;
 
+        // Apply migrations
+        Self::apply_migrations(&conn)?;
+
         debug!("Database schema created successfully");
+        Ok(())
+    }
+
+    /// Apply pending migrations based on user_version pragma
+    fn apply_migrations(conn: &Connection) -> Result<(), CacheError> {
+        let current_version: i32 =
+            conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+
+        for (i, statements) in MIGRATIONS.iter().enumerate() {
+            let version = (i + 1) as i32;
+            if version > current_version {
+                for sql in *statements {
+                    // Handle "duplicate column name" error for existing DBs
+                    // that were created before the migration system
+                    match conn.execute(sql, []) {
+                        Ok(_) => {}
+                        Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+                            if msg.contains("duplicate column name") =>
+                        {
+                            debug!("Column already exists, skipping: {}", sql);
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                debug!("Applied migration v{}", version);
+            }
+        }
+
+        let target_version = MIGRATIONS.len() as i32;
+        if target_version > current_version {
+            conn.pragma_update(None, "user_version", target_version)?;
+            debug!("Updated schema version to v{}", target_version);
+        }
+
         Ok(())
     }
 
@@ -380,8 +412,10 @@ impl VersionStorer for Cache {
         let threshold = now - self.refresh_interval;
 
         let conn = self.lock_conn()?;
-        let mut stmt =
-            conn.prepare("SELECT registry_type, package_name FROM packages WHERE updated_at < ?1")?;
+        // Exclude packages marked as not found to avoid repeated fetch attempts
+        let mut stmt = conn.prepare(
+            "SELECT registry_type, package_name FROM packages WHERE updated_at < ?1 AND not_found = 0",
+        )?;
 
         let packages = stmt
             .query_map([threshold], |row| {
@@ -500,15 +534,16 @@ impl VersionStorer for Cache {
             .collect();
         let placeholders_str = placeholders.join(", ");
 
-        // Only consider packages with at least one version as "cached"
-        // Packages with 0 versions (e.g., due to failed fetch) should be re-fetched
+        // Consider packages as "cached" if:
+        // 1. They have at least one version, OR
+        // 2. They are marked as not found (to skip repeated fetch attempts)
         let query = format!(
             r#"
             SELECT p.package_name
             FROM packages p
             WHERE p.registry_type = ?1
               AND p.package_name IN ({})
-              AND EXISTS (SELECT 1 FROM versions v WHERE v.package_id = p.id)
+              AND (EXISTS (SELECT 1 FROM versions v WHERE v.package_id = p.id) OR p.not_found = 1)
             "#,
             placeholders_str
         );
@@ -534,6 +569,22 @@ impl VersionStorer for Cache {
             .collect();
 
         Ok(not_in_cache)
+    }
+
+    fn mark_not_found(
+        &self,
+        registry_type: RegistryType,
+        package_name: &str,
+    ) -> Result<(), CacheError> {
+        let registry_type = registry_type.as_str();
+        let conn = self.lock_conn()?;
+
+        conn.execute(
+            "UPDATE packages SET not_found = 1 WHERE registry_type = ?1 AND package_name = ?2",
+            (registry_type, package_name),
+        )?;
+
+        Ok(())
     }
 }
 
@@ -1136,5 +1187,241 @@ mod tests {
             .get_latest_version(RegistryType::GoProxy, "github.com/example/module")
             .unwrap();
         assert_eq!(latest, Some("v1.0.0".to_string())); // alpha is filtered
+    }
+
+    #[test]
+    fn mark_not_found_sets_not_found_flag() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
+
+        // Create a package entry via try_start_fetch (simulating a fetch attempt)
+        cache
+            .try_start_fetch(RegistryType::Npm, "nonexistent")
+            .unwrap();
+
+        // Mark as not found
+        cache
+            .mark_not_found(RegistryType::Npm, "nonexistent")
+            .unwrap();
+
+        // Verify the flag is set by checking it's excluded from needing refresh
+        cache
+            .finish_fetch(RegistryType::Npm, "nonexistent")
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let stale = cache.get_packages_needing_refresh().unwrap();
+        assert!(
+            stale.is_empty(),
+            "not_found packages should be excluded from refresh"
+        );
+    }
+
+    #[test]
+    fn get_packages_needing_refresh_excludes_not_found_packages() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        // refresh_interval = 100ms
+        let cache = Cache::new(&db_path, 100, false).unwrap();
+
+        // Add a normal package
+        cache
+            .replace_versions(RegistryType::Npm, "axios", vec!["1.0.0".to_string()])
+            .unwrap();
+
+        // Add a package and mark as not found
+        cache
+            .try_start_fetch(RegistryType::Npm, "nonexistent")
+            .unwrap();
+        cache
+            .mark_not_found(RegistryType::Npm, "nonexistent")
+            .unwrap();
+        cache
+            .finish_fetch(RegistryType::Npm, "nonexistent")
+            .unwrap();
+
+        // Wait for packages to become stale
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        let stale = cache.get_packages_needing_refresh().unwrap();
+
+        // Only axios should be returned, not the not_found package
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].package_name, "axios");
+    }
+
+    #[test]
+    fn filter_packages_not_in_cache_treats_not_found_as_cached() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache = Cache::new(&db_path, 86400, false).unwrap();
+
+        // Add a package and mark as not found
+        cache
+            .try_start_fetch(RegistryType::Npm, "nonexistent")
+            .unwrap();
+        cache
+            .mark_not_found(RegistryType::Npm, "nonexistent")
+            .unwrap();
+        cache
+            .finish_fetch(RegistryType::Npm, "nonexistent")
+            .unwrap();
+
+        // Add a normal package
+        cache
+            .replace_versions(RegistryType::Npm, "axios", vec!["1.0.0".to_string()])
+            .unwrap();
+
+        let package_names = vec![
+            "nonexistent".to_string(), // marked as not found
+            "axios".to_string(),       // has versions
+            "express".to_string(),     // truly not in cache
+        ];
+
+        let not_in_cache = cache
+            .filter_packages_not_in_cache(RegistryType::Npm, &package_names)
+            .unwrap();
+
+        // Only express should be returned (nonexistent is not_found, axios has versions)
+        assert_eq!(not_in_cache, vec!["express".to_string()]);
+    }
+
+    mod migrations {
+        use super::*;
+
+        /// Helper to check if a column exists in a table
+        fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+            conn.query_row(
+                &format!(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('{}') WHERE name = '{}'",
+                    table, column
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false)
+        }
+
+        /// Helper to get user_version
+        fn get_user_version(conn: &Connection) -> i32 {
+            conn.pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap()
+        }
+
+        /// Helper to create initial schema for testing
+        fn create_initial_schema(
+            conn: &Connection,
+            has_fetching_since: bool,
+            has_not_found: bool,
+            user_version: i32,
+        ) {
+            let columns = format!(
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 registry_type TEXT NOT NULL,
+                 package_name TEXT NOT NULL,
+                 updated_at INTEGER NOT NULL{}{}",
+                if has_fetching_since {
+                    ", fetching_since INTEGER"
+                } else {
+                    ""
+                },
+                if has_not_found {
+                    ", not_found INTEGER NOT NULL DEFAULT 0"
+                } else {
+                    ""
+                }
+            );
+
+            conn.execute(
+                &format!(
+                    "CREATE TABLE packages ({}, UNIQUE(registry_type, package_name))",
+                    columns
+                ),
+                [],
+            )
+            .unwrap();
+
+            if user_version > 0 {
+                conn.pragma_update(None, "user_version", user_version)
+                    .unwrap();
+            }
+        }
+
+        #[rstest]
+        // New DB: both columns added
+        #[case(false, false, 0, 2)]
+        // Existing DB with fetching_since only: not_found added
+        #[case(true, false, 0, 2)]
+        // Existing DB with both columns: skip (duplicate detection)
+        #[case(true, true, 0, 2)]
+        // Existing DB with user_version already set: skip migrations
+        #[case(true, true, 2, 2)]
+        fn migration_applies_correctly(
+            #[case] has_fetching_since: bool,
+            #[case] has_not_found: bool,
+            #[case] initial_version: i32,
+            #[case] expected_version: i32,
+        ) {
+            let temp_dir = TempDir::new().unwrap();
+            let db_path = temp_dir.path().join("test.db");
+
+            // Setup initial schema if not new DB
+            if has_fetching_since || has_not_found || initial_version > 0 {
+                let conn = Connection::open(&db_path).unwrap();
+                create_initial_schema(&conn, has_fetching_since, has_not_found, initial_version);
+            }
+
+            // Create cache (triggers migrations)
+            let _cache = Cache::new(&db_path, 86400, false).unwrap();
+
+            // Verify final state
+            let conn = Connection::open(&db_path).unwrap();
+            assert!(
+                column_exists(&conn, "packages", "fetching_since"),
+                "fetching_since should exist"
+            );
+            assert!(
+                column_exists(&conn, "packages", "not_found"),
+                "not_found should exist"
+            );
+            assert_eq!(get_user_version(&conn), expected_version);
+        }
+
+        #[test]
+        fn migration_preserves_existing_data() {
+            let temp_dir = TempDir::new().unwrap();
+            let db_path = temp_dir.path().join("test.db");
+
+            // Create existing DB with data
+            {
+                let conn = Connection::open(&db_path).unwrap();
+                create_initial_schema(&conn, true, false, 0);
+                conn.execute(
+                    "INSERT INTO packages (registry_type, package_name, updated_at) VALUES ('npm', 'axios', 12345)",
+                    [],
+                )
+                .unwrap();
+            }
+
+            // Create cache (triggers migrations)
+            let cache = Cache::new(&db_path, 86400, false).unwrap();
+
+            // Verify data is preserved
+            let conn = Connection::open(&db_path).unwrap();
+            let (name, updated_at): (String, i64) = conn
+                .query_row(
+                    "SELECT package_name, updated_at FROM packages WHERE registry_type = 'npm'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(name, "axios");
+            assert_eq!(updated_at, 12345);
+
+            // Verify cache can read the data
+            let versions = cache.get_versions(RegistryType::Npm, "axios").unwrap();
+            assert!(versions.is_empty()); // No versions, but package exists
+        }
     }
 }
