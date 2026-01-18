@@ -3,7 +3,8 @@ import {
     LanguageClient,
     LanguageClientOptions,
     ServerOptions,
-    Executable
+    Executable,
+    TransportKind
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient;
@@ -14,7 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const run: Executable = {
         command: serverPath,
-        transport: { kind: 'stdio' },
+        transport: TransportKind.stdio,
     };
 
     const serverOptions: ServerOptions = {
