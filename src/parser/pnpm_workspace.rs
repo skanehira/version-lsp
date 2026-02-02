@@ -119,7 +119,17 @@ impl PnpmWorkspaceParser {
         let value_node = node.child_by_field_name("value")?;
 
         let name = self.get_node_text(key_node, content);
-        let version = self.get_node_text(value_node, content);
+        let raw_text = &content[value_node.byte_range()];
+        let trimmed = raw_text.trim();
+
+        // Detect and remove quotes
+        let (version, has_quotes) = if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+            || (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        {
+            (&trimmed[1..trimmed.len() - 1], true)
+        } else {
+            (trimmed, false)
+        };
 
         // Skip empty values
         if version.is_empty() {
@@ -130,15 +140,22 @@ impl PnpmWorkspaceParser {
         let end_offset = value_node.end_byte();
         let start_point = value_node.start_position();
 
+        // Adjust offsets for quotes (same approach as package_json.rs)
+        let (adjusted_start, adjusted_end, adjusted_column) = if has_quotes {
+            (start_offset + 1, end_offset - 1, start_point.column + 1)
+        } else {
+            (start_offset, end_offset, start_point.column)
+        };
+
         Some(PackageInfo {
             name,
-            version,
+            version: version.to_string(),
             commit_hash: None,
             registry_type: RegistryType::PnpmCatalog,
-            start_offset,
-            end_offset,
+            start_offset: adjusted_start,
+            end_offset: adjusted_end,
             line: start_point.row,
-            column: start_point.column,
+            column: adjusted_column,
             extra_info: None,
         })
     }
@@ -248,12 +265,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_handles_quoted_versions() {
+    fn parse_handles_double_quoted_versions() {
         let parser = PnpmWorkspaceParser;
         let content = r#"catalog:
   typescript: "5.0.0"
 "#;
         let result = parser.parse(content).unwrap();
+        // Offsets should exclude the quotes
+        // content[23..30] = "5.0.0" (with quotes), version starts at 24
         assert_eq!(
             result,
             vec![PackageInfo {
@@ -261,10 +280,34 @@ mod tests {
                 version: "5.0.0".to_string(),
                 commit_hash: None,
                 registry_type: RegistryType::PnpmCatalog,
-                start_offset: 23,
-                end_offset: 30,
+                start_offset: 24, // After opening quote
+                end_offset: 29,   // Before closing quote
                 line: 1,
-                column: 14,
+                column: 15, // After opening quote
+                extra_info: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_handles_single_quoted_versions() {
+        let parser = PnpmWorkspaceParser;
+        let content = r#"catalog:
+  typescript: '5.0.0'
+"#;
+        let result = parser.parse(content).unwrap();
+        // Offsets should exclude the quotes
+        assert_eq!(
+            result,
+            vec![PackageInfo {
+                name: "typescript".to_string(),
+                version: "5.0.0".to_string(),
+                commit_hash: None,
+                registry_type: RegistryType::PnpmCatalog,
+                start_offset: 24, // After opening quote
+                end_offset: 29,   // Before closing quote
+                line: 1,
+                column: 15, // After opening quote
                 extra_info: None,
             }]
         );
