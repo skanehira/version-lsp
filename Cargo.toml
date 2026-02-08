@@ -1,6 +1,6 @@
 [package]
 name = "version-lsp"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["skanehira"]
 edition = "2024"
 description = "A Language Server Protocol implementation for package version management"
