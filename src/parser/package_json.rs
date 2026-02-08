@@ -49,8 +49,8 @@ impl Parser for PackageJsonParser {
 
 impl PackageJsonParser {
     /// Dependency field names to extract
-    const DEPENDENCY_FIELDS: [&'static str; 3] =
-        ["dependencies", "devDependencies", "peerDependencies"];
+    const DEPENDENCY_FIELDS: [&'static str; 4] =
+        ["dependencies", "devDependencies", "peerDependencies", "overrides"];
 
     /// Parse npm alias format: npm:package@version or npm:@scope/package@version
     /// Returns (actual_package_name, version)
@@ -510,6 +510,66 @@ mod tests {
         // npm alias without version: name becomes "npm-package-arg", version is empty or "latest"
         assert_eq!(result[0].name, "npm-package-arg");
         assert_eq!(result[0].version, "latest");
+    }
+
+    #[test]
+    fn parse_extracts_overrides() {
+        let parser = PackageJsonParser::new();
+        let content = r#"{
+  "name": "my-app",
+  "overrides": {
+    "lodash": "4.17.21"
+  }
+}"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            PackageInfo {
+                name: "lodash".to_string(),
+                version: "4.17.21".to_string(),
+                commit_hash: None,
+                registry_type: RegistryType::Npm,
+                start_offset: 54,
+                end_offset: 61,
+                line: 3,
+                column: 15,
+                extra_info: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_extracts_overrides_with_npm_alias() {
+        let parser = PackageJsonParser::new();
+        let content = r#"{
+  "name": "my-app",
+  "overrides": {
+    "vite": "npm:rolldown-vite@7.2.5"
+  }
+}"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "rolldown-vite");
+        assert_eq!(result[0].version, "7.2.5");
+    }
+
+    #[test]
+    fn parse_skips_nested_overrides_objects() {
+        let parser = PackageJsonParser::new();
+        let content = r#"{
+  "name": "my-app",
+  "overrides": {
+    "lodash": "4.17.21",
+    "foo": {
+      "bar": "1.0.0"
+    }
+  }
+}"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "lodash");
+        assert_eq!(result[0].version, "4.17.21");
     }
 
     #[test]
