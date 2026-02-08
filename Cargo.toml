@@ -60,7 +60,7 @@ regex = "1.12.3"
 
 [dev-dependencies]
 mockall = "0.14"
-mockito = "1.4"
+mockito = "1.7"
 rstest = "0.26"
 serial_test = "3"
 tempfile = "3.24"
