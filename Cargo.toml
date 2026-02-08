@@ -56,7 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 indexmap = { version = "2.12.1", features = ["serde"] }
 futures = "0.3"
-regex = "1.12.2"
+regex = "1.12.3"
 
 [dev-dependencies]
 mockall = "0.14"
