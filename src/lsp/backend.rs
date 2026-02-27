@@ -118,6 +118,7 @@ impl<S: VersionStorer> Backend<S> {
             RegistryType::PnpmCatalog => config.registries.pnpm_catalog.enabled,
             RegistryType::Jsr => config.registries.jsr.enabled,
             RegistryType::PyPI => config.registries.pypi.enabled,
+            RegistryType::Docker => config.registries.docker.enabled,
         }
     }
 

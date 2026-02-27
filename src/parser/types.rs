@@ -17,6 +17,8 @@ pub enum RegistryType {
     Jsr,
     /// PyPI (pyproject.toml)
     PyPI,
+    /// Docker (compose.yaml)
+    Docker,
 }
 
 impl RegistryType {
@@ -30,6 +32,7 @@ impl RegistryType {
             RegistryType::PnpmCatalog => "pnpm_catalog",
             RegistryType::Jsr => "jsr",
             RegistryType::PyPI => "pypi",
+            RegistryType::Docker => "docker",
         }
     }
 }
@@ -46,6 +49,7 @@ impl std::str::FromStr for RegistryType {
             "pnpm_catalog" => Ok(RegistryType::PnpmCatalog),
             "jsr" => Ok(RegistryType::Jsr),
             "pypi" => Ok(RegistryType::PyPI),
+            "docker" => Ok(RegistryType::Docker),
             _ => Err(()),
         }
     }
@@ -67,9 +71,18 @@ pub fn detect_parser_type(uri: &str) -> Option<RegistryType> {
         Some(RegistryType::Jsr)
     } else if uri.ends_with("/pyproject.toml") {
         Some(RegistryType::PyPI)
+    } else if is_compose_file(uri) {
+        Some(RegistryType::Docker)
     } else {
         None
     }
+}
+
+fn is_compose_file(uri: &str) -> bool {
+    uri.ends_with("/compose.yaml")
+        || uri.ends_with("/compose.yml")
+        || uri.ends_with("/docker-compose.yaml")
+        || uri.ends_with("/docker-compose.yml")
 }
 
 fn is_github_actions_workflow(uri: &str) -> bool {
@@ -204,6 +217,11 @@ mod tests {
     #[case("/path/to/pyproject.toml", Some(RegistryType::PyPI))]
     #[case("/project/pyproject.toml", Some(RegistryType::PyPI))]
     #[case("file:///home/user/pyproject.toml", Some(RegistryType::PyPI))]
+    #[case("/path/to/compose.yaml", Some(RegistryType::Docker))]
+    #[case("/path/to/compose.yml", Some(RegistryType::Docker))]
+    #[case("/path/to/docker-compose.yaml", Some(RegistryType::Docker))]
+    #[case("/path/to/docker-compose.yml", Some(RegistryType::Docker))]
+    #[case("file:///home/user/compose.yaml", Some(RegistryType::Docker))]
     #[case("workflow.yml", None)]
     #[case("random.txt", None)]
     fn detect_parser_type_returns_expected(

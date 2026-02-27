@@ -22,4 +22,17 @@ pub trait VersionMatcher: Send + Sync {
     ///
     /// Returns whether the current version is latest, outdated, newer, or invalid
     fn compare_to_latest(&self, current_version: &str, latest_version: &str) -> CompareResult;
+
+    /// Find the appropriate "latest" version for comparison based on current version context.
+    ///
+    /// Default: returns latest_version unchanged (existing matchers are unaffected).
+    /// Docker: finds the latest version with the same suffix pattern (e.g., `-alpine`).
+    fn resolve_latest(
+        &self,
+        _current_version: &str,
+        latest_version: &str,
+        _all_versions: &[String],
+    ) -> String {
+        latest_version.to_string()
+    }
 }
