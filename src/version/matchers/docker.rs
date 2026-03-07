@@ -8,7 +8,7 @@ use semver::Version;
 use tracing::warn;
 
 use crate::parser::types::RegistryType;
-use crate::version::matcher::VersionMatcher;
+use crate::version::matcher::{BumpTargets, VersionMatcher};
 use crate::version::semver::CompareResult;
 
 pub struct DockerVersionMatcher;
@@ -55,6 +55,64 @@ impl VersionMatcher for DockerVersionMatcher {
                 std::cmp::Ordering::Less => CompareResult::Outdated,
                 std::cmp::Ordering::Greater => CompareResult::Newer,
             },
+        }
+    }
+
+    fn calculate_bump_targets(
+        &self,
+        current_version: &str,
+        available_versions: &[String],
+    ) -> BumpTargets {
+        let Some(current_parsed) = parse_docker_tag(current_version) else {
+            return BumpTargets::default();
+        };
+
+        let current_suffix = &current_parsed.suffix;
+
+        // Collect versions with the same suffix, parsed into semver
+        let same_suffix_versions: Vec<(&str, Version)> = available_versions
+            .iter()
+            .filter_map(|v| {
+                let parsed = parse_docker_tag(v)?;
+                if parsed.suffix == *current_suffix {
+                    Some((v.as_str(), parsed.semver))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // patch: same major.minor, higher patch
+        let patch = same_suffix_versions
+            .iter()
+            .filter(|(_, sv)| {
+                sv.major == current_parsed.semver.major
+                    && sv.minor == current_parsed.semver.minor
+                    && *sv > current_parsed.semver
+            })
+            .max_by(|(_, a), (_, b)| a.cmp(b))
+            .map(|(tag, _)| tag.to_string());
+
+        // minor: same major, higher minor
+        let minor = same_suffix_versions
+            .iter()
+            .filter(|(_, sv)| {
+                sv.major == current_parsed.semver.major && sv.minor > current_parsed.semver.minor
+            })
+            .max_by(|(_, a), (_, b)| a.cmp(b))
+            .map(|(tag, _)| tag.to_string());
+
+        // major: higher major
+        let major = same_suffix_versions
+            .iter()
+            .filter(|(_, sv)| sv.major > current_parsed.semver.major)
+            .max_by(|(_, a), (_, b)| a.cmp(b))
+            .map(|(tag, _)| tag.to_string());
+
+        BumpTargets {
+            patch,
+            minor,
+            major,
         }
     }
 
@@ -299,5 +357,42 @@ mod tests {
         assert!(matcher.version_exists("1.25", &versions));
         assert!(matcher.version_exists("1.25-alpine", &versions));
         assert!(!matcher.version_exists("1.26", &versions));
+    }
+
+    #[test]
+    fn calculate_bump_targets_returns_same_suffix_versions_when_suffixed() {
+        let matcher = DockerVersionMatcher;
+        let versions = vec![
+            "1.25".to_string(),
+            "1.25-alpine".to_string(),
+            "1.27".to_string(),
+            "1.27-alpine".to_string(),
+            "2.0".to_string(),
+            "2.0-alpine".to_string(),
+        ];
+        let targets = matcher.calculate_bump_targets("1.25-alpine", &versions);
+        assert_eq!(targets.patch, None);
+        assert_eq!(targets.minor, Some("1.27-alpine".to_string()));
+        assert_eq!(targets.major, Some("2.0-alpine".to_string()));
+    }
+
+    #[test]
+    fn calculate_bump_targets_returns_versions_when_no_suffix() {
+        let matcher = DockerVersionMatcher;
+        let versions = vec!["1.25".to_string(), "1.27".to_string(), "2.0".to_string()];
+        let targets = matcher.calculate_bump_targets("1.25", &versions);
+        assert_eq!(targets.patch, None);
+        assert_eq!(targets.minor, Some("1.27".to_string()));
+        assert_eq!(targets.major, Some("2.0".to_string()));
+    }
+
+    #[test]
+    fn calculate_bump_targets_returns_default_when_invalid_tag() {
+        let matcher = DockerVersionMatcher;
+        let versions = vec!["1.25".to_string(), "1.27".to_string()];
+        let targets = matcher.calculate_bump_targets("latest", &versions);
+        assert_eq!(targets.patch, None);
+        assert_eq!(targets.minor, None);
+        assert_eq!(targets.major, None);
     }
 }
