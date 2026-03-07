@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::parser::cargo_toml::CargoTomlParser;
+use crate::parser::compose::ComposeParser;
 use crate::parser::deno_json::DenoJsonParser;
 use crate::parser::github_actions::GitHubActionsParser;
 use crate::parser::go_mod::GoModParser;
@@ -17,10 +18,11 @@ use crate::parser::traits::Parser;
 use crate::parser::types::RegistryType;
 use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
-    CratesVersionMatcher, GitHubActionsMatcher, GoVersionMatcher, JsrVersionMatcher,
-    NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
+    CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
+    JsrVersionMatcher, NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
 };
 use crate::version::registries::crates_io::CratesIoRegistry;
+use crate::version::registries::docker::DockerRegistry;
 use crate::version::registries::github::GitHubRegistry;
 use crate::version::registries::go_proxy::GoProxyRegistry;
 use crate::version::registries::jsr::JsrRegistry;
@@ -136,6 +138,15 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(PyprojectTomlParser::new()),
             Arc::new(PypiVersionMatcher),
             Arc::new(PypiRegistry::default()),
+        ),
+    );
+
+    resolvers.insert(
+        RegistryType::Docker,
+        PackageResolver::new(
+            Arc::new(ComposeParser::new()),
+            Arc::new(DockerVersionMatcher),
+            Arc::new(DockerRegistry::default()),
         ),
     );
 

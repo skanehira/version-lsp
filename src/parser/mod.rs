@@ -10,6 +10,7 @@
 //! - pyproject_toml.rs: pyproject.toml parser
 
 pub mod cargo_toml;
+pub mod compose;
 pub mod deno_json;
 pub mod github_actions;
 pub mod go_mod;
@@ -20,6 +21,7 @@ pub mod traits;
 pub mod types;
 
 pub use cargo_toml::CargoTomlParser;
+pub use compose::ComposeParser;
 pub use deno_json::DenoJsonParser;
 pub use github_actions::GitHubActionsParser;
 pub use go_mod::GoModParser;
