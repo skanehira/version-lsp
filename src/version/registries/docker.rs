@@ -5,6 +5,7 @@
 
 use crate::parser::types::RegistryType;
 use crate::version::error::RegistryError;
+use crate::version::matchers::docker::parse_docker_tag;
 use crate::version::registry::Registry;
 use crate::version::types::PackageVersions;
 use semver::Version;
@@ -216,36 +217,8 @@ fn filter_and_sort_tags(tags: Vec<String>) -> Vec<String> {
     let mut versioned: Vec<(String, Version, String)> = tags
         .into_iter()
         .filter_map(|tag| {
-            // Strip v/V prefix for initial digit check
-            let stripped = tag
-                .strip_prefix('v')
-                .or_else(|| tag.strip_prefix('V'))
-                .unwrap_or(&tag);
-
-            // Must start with a digit
-            if !stripped.starts_with(|c: char| c.is_ascii_digit()) {
-                return None;
-            }
-
-            // Extract version part (digits and dots)
-            let version_end = stripped
-                .find(|c: char| !c.is_ascii_digit() && c != '.')
-                .unwrap_or(stripped.len());
-
-            let version_part = &stripped[..version_end];
-            let suffix = stripped[version_end..].to_string();
-
-            // Normalize to semver
-            let parts: Vec<&str> = version_part.split('.').collect();
-            let normalized = match parts.len() {
-                1 => format!("{}.0.0", parts[0]),
-                2 => format!("{}.{}.0", parts[0], parts[1]),
-                3 => format!("{}.{}.{}", parts[0], parts[1], parts[2]),
-                _ => return None,
-            };
-
-            let semver = Version::parse(&normalized).ok()?;
-            Some((tag, semver, suffix))
+            let parsed = parse_docker_tag(&tag)?;
+            Some((tag, parsed.semver, parsed.suffix))
         })
         .collect();
 

@@ -368,18 +368,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case("nginx", None)]
+    #[case("nginx", Some("library/nginx"))]
     #[case("myuser/myapp", Some("myuser/myapp"))]
     #[case("ghcr.io/owner/repo", Some("ghcr.io/owner/repo"))]
     #[case("mcr.microsoft.com/dotnet/sdk", None)]
     #[case("quay.io/prometheus/node-exporter", None)]
     fn resolve_image_name_returns_expected(#[case] input: &str, #[case] expected: Option<&str>) {
-        // Special case for official images
-        if input == "nginx" {
-            assert_eq!(resolve_image_name(input), Some("library/nginx".to_string()));
-        } else {
-            assert_eq!(resolve_image_name(input), expected.map(|s| s.to_string()));
-        }
+        assert_eq!(resolve_image_name(input), expected.map(|s| s.to_string()));
     }
 
     #[test]

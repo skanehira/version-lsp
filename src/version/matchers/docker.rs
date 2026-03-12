@@ -154,13 +154,13 @@ impl VersionMatcher for DockerVersionMatcher {
 }
 
 /// Parsed Docker tag components
-struct ParsedDockerTag {
+pub(crate) struct ParsedDockerTag {
     /// The numeric version part (e.g., "1.25.0")
-    version_part: String,
+    pub(crate) version_part: String,
     /// The suffix after the version (e.g., "-alpine"), empty if none
-    suffix: String,
+    pub(crate) suffix: String,
     /// Parsed semver
-    semver: Version,
+    pub(crate) semver: Version,
 }
 
 /// Parse a Docker tag into version part and suffix.
@@ -170,7 +170,7 @@ struct ParsedDockerTag {
 /// - "16-alpine" → version_part="16", suffix="-alpine"
 /// - "v1.0.0" → version_part="1.0.0", suffix=""
 /// - "1.25" → version_part="1.25", suffix=""
-fn parse_docker_tag(tag: &str) -> Option<ParsedDockerTag> {
+pub(crate) fn parse_docker_tag(tag: &str) -> Option<ParsedDockerTag> {
     // Strip v/V prefix
     let tag = tag.strip_prefix('v').unwrap_or(tag);
     let tag = tag.strip_prefix('V').unwrap_or(tag);
