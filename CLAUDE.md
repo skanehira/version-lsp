@@ -27,6 +27,7 @@ cargo test test_name
 # Run E2E tests for a specific registry
 cargo test --test e2e_npm
 cargo test --test e2e_crates
+cargo test --test e2e_docker
 
 # Generate coverage (requires cargo-llvm-cov)
 cargo llvm-cov nextest --lcov --output-path lcov.info
@@ -41,7 +42,7 @@ cargo clippy
 
 ## Architecture
 
-version-lsp is a Language Server Protocol implementation that checks package dependency versions across multiple registries (npm, crates.io, Go proxy, PyPI, GitHub Actions, JSR, pnpm catalogs).
+version-lsp is a Language Server Protocol implementation that checks package dependency versions across multiple registries (npm, crates.io, Go proxy, PyPI, GitHub Actions, JSR, pnpm catalogs, Docker Hub/ghcr.io).
 
 詳細なアーキテクチャ（データフロー図、DB スキーマ、各コンポーネントの責務など）は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照すること。実装・設計変更時は必ずこのドキュメントを確認し、整合性を保つこと。
 
@@ -63,7 +64,7 @@ File opened/changed in editor
 **Version layer** (`src/version/`): Three coordinated components:
 - `Registry` trait + `registries/`: Async HTTP fetchers for each package registry
 - `Cache` (`cache.rs`): SQLite storage with WAL mode, fetch deduplication, and refresh intervals
-- `VersionMatcher` trait + `matchers/`: Registry-specific comparison logic (semver ranges for npm/crates, partial version matching for GitHub Actions, PEP 508 for PyPI)
+- `VersionMatcher` trait + `matchers/`: Registry-specific comparison logic (semver ranges for npm/crates, partial version matching for GitHub Actions, PEP 508 for PyPI, suffix-aware Docker tag comparison)
 
 **LSP layer** (`src/lsp/`):
 - `Backend` is generic over `VersionStorer` trait (enables test injection)

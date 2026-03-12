@@ -37,6 +37,7 @@ A Language Server Protocol (LSP) implementation that provides version checking d
 | `pyproject.toml`                                      | PyPI            |
 | `.github/workflows/*.yaml`/`.github/actions/*/*.yaml` | GitHub Releases |
 | `deno.json` / `deno.jsonc`                            | JSR             |
+| `compose.yaml` / `docker-compose.yaml`                | Docker Hub / ghcr.io |
 
 ### pnpm Catalogs
 
@@ -55,6 +56,24 @@ catalogs:
   react18:
     react: ^18.2.0
 ```
+
+### Docker Compose
+
+Supports container image tag version checking in `compose.yaml` and `docker-compose.yaml` for Docker Hub and ghcr.io images:
+
+```yaml
+services:
+  web:
+    image: nginx:1.25          # Docker Hub official image
+  app:
+    image: myuser/myapp:v1.0.0 # Docker Hub user image
+  tools:
+    image: ghcr.io/owner/repo:v2.0.0 # GitHub Container Registry
+```
+
+- Suffix-aware comparison: `nginx:1.25-alpine` suggests `1.27-alpine` when available
+- Skips `latest` tags, digest references (`@sha256:...`), and variable expansions (`${VAR}`)
+- Unsupported registries (e.g., `mcr.microsoft.com`) are ignored
 
 ## Installation
 
@@ -137,6 +156,7 @@ lspconfig.version_lsp.setup({
         github = { enabled = true },
         pnpmCatalog = { enabled = true },
         jsr = { enabled = true },
+        docker = { enabled = true },
       },
       ignorePrerelease = true,  -- Ignore prerelease versions (default: true)
     },
@@ -156,6 +176,7 @@ lspconfig.version_lsp.setup({
 | `registries.github.enabled`      | boolean | `true`     | Enable GitHub Releases checks                              |
 | `registries.pnpmCatalog.enabled` | boolean | `true`     | Enable pnpm catalog checks                                 |
 | `registries.jsr.enabled`         | boolean | `true`     | Enable JSR registry checks                                 |
+| `registries.docker.enabled`      | boolean | `true`     | Enable Docker Hub / ghcr.io checks                         |
 | `ignorePrerelease`               | boolean | `true`     | Ignore prerelease versions (alpha, beta, rc, etc.)         |
 
 ## Data Storage

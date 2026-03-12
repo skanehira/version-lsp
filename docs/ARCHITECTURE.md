@@ -2,7 +2,7 @@
 
 ## Overview
 
-version-lsp is a Language Server Protocol (LSP) implementation that provides version checking diagnostics for package dependency files (package.json, Cargo.toml, go.mod, GitHub Actions workflow).
+version-lsp is a Language Server Protocol (LSP) implementation that provides version checking diagnostics for package dependency files (package.json, Cargo.toml, go.mod, GitHub Actions workflow, pyproject.toml, deno.json, pnpm-workspace.yaml, compose.yaml).
 
 **Key Features:**
 - Detection and warning for outdated versions
@@ -11,12 +11,16 @@ version-lsp is a Language Server Protocol (LSP) implementation that provides ver
 - Support for version range specifications in each ecosystem
 
 **Supported Registries:**
-| Registry        | File Format         | Version Specification                        |
-|-----------------|---------------------|----------------------------------------------|
-| npm             | package.json        | semver range (`^`, `~`, `>=`, `||`, etc.)    |
-| crates.io       | Cargo.toml          | Cargo requirements (`^`, `~`, `=`, `*`, etc.)|
-| Go Proxy        | go.mod              | Exact match                                  |
-| GitHub Releases | GitHub Actions YAML | Partial match (`v4` → `v4.x.x`)              |
+| Registry             | File Format                        | Version Specification                         |          |
+| -------------------- | ---------------------------------- | --------------------------------------------- | -------- |
+| npm                  | package.json                       | semver range (`^`, `~`, `>=`, `               | `, etc.) |
+| crates.io            | Cargo.toml                         | Cargo requirements (`^`, `~`, `=`, `*`, etc.) |          |
+| Go Proxy             | go.mod                             | Exact match                                   |          |
+| GitHub Releases      | GitHub Actions YAML                | Partial match (`v4` → `v4.x.x`)               |          |
+| PyPI                 | pyproject.toml                     | PEP 508 version specifiers                    |          |
+| JSR                  | deno.json / deno.jsonc             | semver range                                  |          |
+| npm (pnpm)           | pnpm-workspace.yaml                | semver range (catalog definitions)            |          |
+| Docker Hub / ghcr.io | compose.yaml / docker-compose.yaml | Suffix-aware tag comparison                   |          |
 
 ---
 
@@ -48,6 +52,10 @@ version-lsp is a Language Server Protocol (LSP) implementation that provides ver
 │  • CargoToml        │  • CratesMatcher    │  • CratesRegistry       │
 │  • GoMod            │  • GoMatcher        │  • GoProxyRegistry      │
 │  • GitHubActions    │  • GitHubMatcher    │  • GitHubRegistry       │
+│  • PyprojectToml    │  • PypiMatcher      │  • PypiRegistry         │
+│  • DenoJson         │  • JsrMatcher       │  • JsrRegistry          │
+│  • PnpmWorkspace    │  • PnpmCatalog      │  (reuses NpmRegistry)   │
+│  • Compose          │  • DockerMatcher    │  • DockerRegistry       │
 └─────────────────────┴─────────────────────┴─────────────────────────┘
                                   │
                                   ▼
@@ -89,7 +97,11 @@ src/
 │   ├── package_json.rs     # npm package.json parser
 │   ├── cargo_toml.rs       # Rust Cargo.toml parser
 │   ├── github_actions.rs   # GitHub Actions workflow parser
-│   └── go_mod.rs           # Go go.mod parser
+│   ├── go_mod.rs           # Go go.mod parser
+│   ├── pyproject_toml.rs   # Python pyproject.toml parser
+│   ├── deno_json.rs        # Deno deno.json/deno.jsonc parser
+│   ├── pnpm_workspace.rs   # pnpm pnpm-workspace.yaml parser
+│   └── compose.rs          # Docker compose.yaml parser
 │
 └── version/                 # Version Management Layer
     ├── mod.rs              # Module documentation & architecture diagram
@@ -106,14 +118,21 @@ src/
     │   ├── npm.rs          # npm registry API client
     │   ├── crates_io.rs    # crates.io API client
     │   ├── github.rs       # GitHub Releases API client
-    │   └── go_proxy.rs     # Go Proxy API client
+    │   ├── go_proxy.rs     # Go Proxy API client
+    │   ├── pypi.rs         # PyPI API client
+    │   ├── jsr.rs          # JSR API client
+    │   └── docker.rs       # Docker Hub / ghcr.io API client
     │
     └── matchers/           # Version Matcher Implementations
         ├── mod.rs
         ├── npm.rs          # npm semver range matching
         ├── crates.rs       # Cargo version requirements
         ├── github_actions.rs # GitHub Actions partial version matching
-        └── go.rs           # Go exact matching
+        ├── go.rs           # Go exact matching
+        ├── pypi.rs         # PyPI PEP 508 matching
+        ├── jsr.rs          # JSR semver range matching
+        ├── pnpm_catalog.rs # pnpm catalog (reuses npm matching)
+        └── docker.rs       # Docker suffix-aware tag matching
 ```
 
 ---
@@ -187,15 +206,15 @@ cache.get_packages_needing_refresh()
 Group by registry type
            │
            ▼
-┌──────────────────────────────────────────┐
-│   For each package (staggered 10ms):     │
-│     1. try_start_fetch() to acquire lock │
-│     2. registry.fetch_all_versions()     │
-│     3. Save versions + dist_tags to cache│
-│     4. finish_fetch() to release lock    │
-│                                          │
-│   ※ Continue processing even on errors   │
-└──────────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│   For each package (staggered 10ms):      │
+│     1. try_start_fetch() to acquire lock  │
+│     2. registry.fetch_all_versions()      │
+│     3. Save versions + dist_tags to cache │
+│     4. finish_fetch() to release lock     │
+│                                           │
+│   ※ Continue processing even on errors    │
+└───────────────────────────────────────────┘
 ```
 
 ### 3. Configuration Update Flow
@@ -303,16 +322,23 @@ pub trait VersionMatcher: Send + Sync {
     fn registry_type(&self) -> RegistryType;
     fn version_exists(&self, version_spec: &str, available_versions: &[String]) -> bool;
     fn compare_to_latest(&self, current: &str, latest: &str) -> CompareResult;
+    fn resolve_latest(&self, current: &str, latest: &str, all_versions: &[String]) -> String {
+        latest.to_string() // default: return latest as-is
+    }
 }
 ```
 
 **Implementations:**
-| Matcher | Version Specification Example | Behavior |
-|---------|------------------------------|----------|
-| NpmMatcher | `^1.2.3`, `>=1.0.0 <2.0.0` | semver range evaluation |
-| CratesMatcher | `1.2.3`, `~1.2`, `>=1, <2` | Cargo requirements |
-| GoMatcher | `v1.2.3` | Exact match |
-| GitHubMatcher | `v4`, `v4.1` | Partial match (major/minor) |
+| Matcher            | Version Specification Example   | Behavior                                               |
+| ------------------ | ------------------------------- | ------------------------------------------------------ |
+| NpmMatcher         | `^1.2.3`, `>=1.0.0 <2.0.0`      | semver range evaluation                                |
+| CratesMatcher      | `1.2.3`, `~1.2`, `>=1, <2`      | Cargo requirements                                     |
+| GoMatcher          | `v1.2.3`                        | Exact match                                            |
+| GitHubMatcher      | `v4`, `v4.1`                    | Partial match (major/minor)                            |
+| PypiMatcher        | `>=1.0,<2.0`, `~=1.4`           | PEP 508 version specifiers                             |
+| JsrMatcher         | `^1.2.3`, `~1.2.3`              | semver range evaluation                                |
+| PnpmCatalogMatcher | `^1.2.3`, `~1.2.3`              | semver range (same as npm)                             |
+| DockerMatcher      | `1.25`, `1.25-alpine`, `v1.0.0` | Suffix-aware tag comparison, `resolve_latest` override |
 
 ### Registry (src/version/registry.rs)
 
@@ -327,12 +353,15 @@ pub trait Registry: Send + Sync {
 ```
 
 **Implementations:**
-| Registry | Endpoint | Notes |
-|----------|----------|-------|
-| NpmRegistry | `registry.npmjs.org/{pkg}` | dist-tags support, sorted by publish date |
-| CratesRegistry | `crates.io/api/v1/crates/{pkg}` | Excludes yanked versions |
-| GoProxyRegistry | `proxy.golang.org/{mod}/@v/list` | Module path encoding |
-| GitHubRegistry | `api.github.com/repos/{owner/repo}/releases` | Rate limit handling |
+| Registry        | Endpoint                                               | Notes                                     |
+| --------------- | ------------------------------------------------------ | ----------------------------------------- |
+| NpmRegistry     | `registry.npmjs.org/{pkg}`                             | dist-tags support, sorted by publish date |
+| CratesRegistry  | `crates.io/api/v1/crates/{pkg}`                        | Excludes yanked versions                  |
+| GoProxyRegistry | `proxy.golang.org/{mod}/@v/list`                       | Module path encoding                      |
+| GitHubRegistry  | `api.github.com/repos/{owner/repo}/releases`           | Rate limit handling                       |
+| PypiRegistry    | `pypi.org/pypi/{pkg}/json`                             | Excludes yanked versions                  |
+| JsrRegistry     | `jsr.io/api/scopes/{scope}/packages/{pkg}`             | JSR scoped packages                       |
+| DockerRegistry  | Docker Hub: `registry-1.docker.io`, ghcr.io: `ghcr.io` | Token auth, tag filtering/sorting         |
 
 ---
 
@@ -340,9 +369,9 @@ pub trait Registry: Send + Sync {
 
 ### File Paths
 
-| Item | Path |
-|------|------|
-| Cache DB | `$XDG_DATA_HOME/version-lsp/versions.db` or `~/.local/share/version-lsp/versions.db` |
+| Item     | Path                                                                                         |
+| -------- | -------------------------------------------------------------------------------------------- |
+| Cache DB | `$XDG_DATA_HOME/version-lsp/versions.db` or `~/.local/share/version-lsp/versions.db`         |
 | Log File | `$XDG_DATA_HOME/version-lsp/version-lsp.log` or `~/.local/share/version-lsp/version-lsp.log` |
 
 ### Configuration Structure
@@ -357,7 +386,11 @@ pub trait Registry: Send + Sync {
       "npm": { "enabled": true },
       "crates": { "enabled": true },
       "goProxy": { "enabled": true },
-      "github": { "enabled": true }
+      "github": { "enabled": true },
+      "pypi": { "enabled": true },
+      "pnpmCatalog": { "enabled": true },
+      "jsr": { "enabled": true },
+      "docker": { "enabled": true }
     },
     "ignorePrerelease": true
   }
@@ -366,11 +399,11 @@ pub trait Registry: Send + Sync {
 
 ### Constants
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `DEFAULT_REFRESH_INTERVAL_MS` | 86,400,000 (24 hours) | Cache refresh interval |
-| `FETCH_TIMEOUT_MS` | 30,000 (30 seconds) | Fetch lock timeout |
-| `FETCH_STAGGER_DELAY_MS` | 10 | Delay between fetch starts (rate limit mitigation) |
+| Constant                      | Value                 | Description                                        |
+| ----------------------------- | --------------------- | -------------------------------------------------- |
+| `DEFAULT_REFRESH_INTERVAL_MS` | 86,400,000 (24 hours) | Cache refresh interval                             |
+| `FETCH_TIMEOUT_MS`            | 30,000 (30 seconds)   | Fetch lock timeout                                 |
+| `FETCH_STAGGER_DELAY_MS`      | 10                    | Delay between fetch starts (rate limit mitigation) |
 
 ---
 
@@ -413,16 +446,24 @@ src/
 ├── **/mod.rs          # Each module has #[cfg(test)] mod tests
 │
 tests/
-└── lsp_e2e_test.rs    # E2E LSP protocol tests
+├── helper/            # Shared test utilities (mock registry, LSP helpers)
+├── e2e_npm.rs         # npm E2E tests
+├── e2e_crates.rs      # crates.io E2E tests
+├── e2e_go.rs          # Go Proxy E2E tests
+├── e2e_pypi.rs        # PyPI E2E tests
+├── e2e_github.rs      # GitHub Actions E2E tests
+├── e2e_jsr.rs         # JSR E2E tests
+├── e2e_pnpm.rs        # pnpm catalog E2E tests
+└── e2e_docker.rs      # Docker Hub / ghcr.io E2E tests
 ```
 
 ### Test Patterns
 
-| Type | Location | Purpose |
-|------|----------|---------|
-| Unit Tests | Within implementation files | Parser correctness, matcher logic, cache operations |
-| Integration Tests | tests/ | Component interactions |
-| E2E Tests | tests/lsp_e2e_test.rs | Complete LSP protocol flows |
+| Type              | Location                    | Purpose                                             |
+| ----------------- | --------------------------- | --------------------------------------------------- |
+| Unit Tests        | Within implementation files | Parser correctness, matcher logic, cache operations |
+| Integration Tests | tests/                      | Component interactions                              |
+| E2E Tests         | tests/e2e_*.rs              | Complete LSP protocol flows per registry            |
 
 ### Test Tools
 - **mockall**: Trait mocking

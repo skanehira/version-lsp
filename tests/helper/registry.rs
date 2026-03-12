@@ -8,6 +8,7 @@ use tempfile::TempDir;
 
 use version_lsp::lsp::resolver::PackageResolver;
 use version_lsp::parser::cargo_toml::CargoTomlParser;
+use version_lsp::parser::compose::ComposeParser;
 use version_lsp::parser::deno_json::DenoJsonParser;
 use version_lsp::parser::github_actions::GitHubActionsParser;
 use version_lsp::parser::go_mod::GoModParser;
@@ -19,8 +20,8 @@ use version_lsp::version::cache::Cache;
 use version_lsp::version::checker::VersionStorer;
 use version_lsp::version::error::RegistryError;
 use version_lsp::version::matchers::{
-    CratesVersionMatcher, GitHubActionsMatcher, GoVersionMatcher, JsrVersionMatcher,
-    NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
+    CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
+    JsrVersionMatcher, NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
 };
 use version_lsp::version::registry::Registry;
 use version_lsp::version::types::PackageVersions;
@@ -104,6 +105,11 @@ pub fn create_test_resolver(
         RegistryType::PyPI => PackageResolver::new(
             Arc::new(PyprojectTomlParser::new()),
             Arc::new(PypiVersionMatcher),
+            Arc::new(mock_registry),
+        ),
+        RegistryType::Docker => PackageResolver::new(
+            Arc::new(ComposeParser::new()),
+            Arc::new(DockerVersionMatcher),
             Arc::new(mock_registry),
         ),
     }

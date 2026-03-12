@@ -188,8 +188,11 @@ pub fn compare_version<S: VersionStorer>(
     let all_versions = storer.get_versions(registry_type, package_name)?;
     let version_exists = matcher.version_exists(&resolved_version, &all_versions);
 
+    // Let matcher resolve the effective latest version (e.g., Docker suffix matching)
+    let effective_latest = matcher.resolve_latest(&resolved_version, &latest, &all_versions);
+
     // Compare versions
-    let status = match matcher.compare_to_latest(&resolved_version, &latest) {
+    let status = match matcher.compare_to_latest(&resolved_version, &effective_latest) {
         CompareResult::Invalid => VersionStatus::Invalid,
         _ if !version_exists => VersionStatus::NotFound,
         CompareResult::Latest => VersionStatus::Latest,
@@ -199,7 +202,7 @@ pub fn compare_version<S: VersionStorer>(
 
     Ok(VersionCompareResult {
         current_version: current_version.to_string(),
-        latest_version: Some(latest),
+        latest_version: Some(effective_latest),
         status,
     })
 }
