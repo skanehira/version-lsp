@@ -4,7 +4,8 @@ use crate::parser::types::{ExtraInfo, PackageInfo};
 use crate::version::checker::VersionStorer;
 use crate::version::registries::github::TagShaFetcher;
 use crate::version::semver::{
-    calculate_latest_major, calculate_latest_minor, calculate_latest_patch,
+    calculate_latest_major, calculate_latest_minor, calculate_latest_patch, calculate_next_major,
+    calculate_next_minor,
 };
 use std::collections::HashMap;
 use tower_lsp::lsp_types::{
@@ -88,14 +89,22 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
     let current = &package.version;
     let prefix = extract_version_prefix(current);
 
-    // Calculate bump targets
+    // Calculate bump targets — include "next" steps for when multiple versions behind
     let patch = calculate_latest_patch(current, &versions);
+    let next_minor = calculate_next_minor(current, &versions);
     let minor = calculate_latest_minor(current, &versions);
+    let next_major = calculate_next_major(current, &versions);
     let major = calculate_latest_major(current, &versions);
 
-    // Collect unique bump targets with their labels
+    // Collect unique bump targets with their labels, ordered from smallest to largest jump
     let mut seen = std::collections::HashSet::new();
-    let bump_targets = [(patch, "patch"), (minor, "minor"), (major, "major")];
+    let bump_targets = [
+        (patch, "latest patch"),
+        (next_minor, "next minor"),
+        (minor, "latest minor"),
+        (next_major, "next major"),
+        (major, "latest major"),
+    ];
 
     bump_targets
         .into_iter()
@@ -104,7 +113,7 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
             if seen.insert(v.clone()) {
                 let new_version = format!("{prefix}{v}");
                 Some(create_bump_action(
-                    &format!("Bump to latest {label}: {new_version}"),
+                    &format!("Bump to {label}: {new_version}"),
                     &new_version,
                     package,
                     uri,
@@ -181,14 +190,22 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
     let current = &package.version;
     let prefix = extract_version_prefix(current);
 
-    // Calculate bump targets
+    // Calculate bump targets — include "next" steps for when multiple versions behind
     let patch = calculate_latest_patch(current, &versions);
+    let next_minor = calculate_next_minor(current, &versions);
     let minor = calculate_latest_minor(current, &versions);
+    let next_major = calculate_next_major(current, &versions);
     let major = calculate_latest_major(current, &versions);
 
-    // Collect unique bump targets with their labels
+    // Collect unique bump targets with their labels, ordered from smallest to largest jump
     let mut seen = std::collections::HashSet::new();
-    let bump_targets = [(patch, "patch"), (minor, "minor"), (major, "major")];
+    let bump_targets = [
+        (patch, "latest patch"),
+        (next_minor, "next minor"),
+        (minor, "latest minor"),
+        (next_major, "next major"),
+        (major, "latest major"),
+    ];
 
     let mut actions = Vec::new();
 
@@ -211,7 +228,7 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
             };
 
             let action = create_hash_bump_action(
-                &format!("Bump to latest {label}: {new_version}"),
+                &format!("Bump to {label}: {new_version}"),
                 &new_sha,
                 &new_version,
                 package,
@@ -221,7 +238,7 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
         } else {
             // No commit hash, use the existing logic
             actions.push(create_bump_action(
-                &format!("Bump to latest {label}: {new_version}"),
+                &format!("Bump to {label}: {new_version}"),
                 &new_version,
                 package,
                 uri,
@@ -606,6 +623,33 @@ mod tests {
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].title, "Bump to latest minor: v0.15.0");
         assert_eq!(actions[1].title, "Bump to latest major: v1.0.0");
+    }
+
+    #[test]
+    fn generate_bump_code_actions_shows_next_and_latest_major_when_multiple_behind() {
+        let storer =
+            MockStorer::new(vec!["2.0.0", "3.0.0", "3.5.0", "4.0.0", "4.2.0", "5.0.0"]);
+        let package = make_package("lodash", "^2.0.0", 3, 15, 6);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_bump_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].title, "Bump to next major: ^3.5.0");
+        assert_eq!(actions[1].title, "Bump to latest major: ^5.0.0");
+    }
+
+    #[test]
+    fn generate_bump_code_actions_shows_next_and_latest_minor_when_multiple_behind() {
+        let storer = MockStorer::new(vec!["4.17.0", "4.18.0", "4.18.5", "4.19.0", "4.20.0"]);
+        let package = make_package("lodash", "^4.17.0", 3, 15, 7);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_bump_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].title, "Bump to next minor: ^4.18.5");
+        assert_eq!(actions[1].title, "Bump to latest minor: ^4.20.0");
     }
 
     // Tests for generate_bump_code_actions_with_sha

@@ -113,6 +113,60 @@ pub fn calculate_latest_major(
     }
 }
 
+/// Calculate the next minor version (current.minor + 1 series)
+///
+/// Returns the latest version within the next minor series, or None
+/// if no such version exists. Only useful when multiple minors behind.
+pub fn calculate_next_minor(
+    current_version: &str,
+    available_versions: &[String],
+) -> Option<String> {
+    let current = parse_version(current_version)?;
+
+    let next_minor_num = available_versions
+        .iter()
+        .filter_map(|v| parse_version(v))
+        .filter(|v| v.pre.is_empty())
+        .filter(|v| v.major == current.major && v.minor > current.minor)
+        .map(|v| v.minor)
+        .min()?;
+
+    available_versions
+        .iter()
+        .filter_map(|v| parse_version(v))
+        .filter(|v| v.pre.is_empty())
+        .filter(|v| v.major == current.major && v.minor == next_minor_num)
+        .max()
+        .map(|v| v.to_string())
+}
+
+/// Calculate the next major version (current.major + 1 series)
+///
+/// Returns the latest version within the next major series, or None
+/// if no such version exists. Only useful when multiple majors behind.
+pub fn calculate_next_major(
+    current_version: &str,
+    available_versions: &[String],
+) -> Option<String> {
+    let current = parse_version(current_version)?;
+
+    let next_major_num = available_versions
+        .iter()
+        .filter_map(|v| parse_version(v))
+        .filter(|v| v.pre.is_empty())
+        .filter(|v| v.major > current.major)
+        .map(|v| v.major)
+        .min()?;
+
+    available_versions
+        .iter()
+        .filter_map(|v| parse_version(v))
+        .filter(|v| v.pre.is_empty())
+        .filter(|v| v.major == next_major_num)
+        .max()
+        .map(|v| v.to_string())
+}
+
 /// Check if a version string is a prerelease version.
 /// Returns true if the version has a prerelease suffix (e.g., -alpha, -beta, -rc).
 pub fn is_prerelease(version: &str) -> bool {
