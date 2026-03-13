@@ -55,6 +55,7 @@ pub fn calculate_latest_patch(
     let latest_patch = available_versions
         .iter()
         .filter_map(|v| parse_version(v))
+        .filter(|v| v.pre.is_empty())
         .filter(|v| v.major == current.major && v.minor == current.minor)
         .max()?;
 
@@ -78,6 +79,7 @@ pub fn calculate_latest_minor(
     let latest_minor = available_versions
         .iter()
         .filter_map(|v| parse_version(v))
+        .filter(|v| v.pre.is_empty())
         .filter(|v| v.major == current.major)
         .max()?;
 
@@ -101,6 +103,7 @@ pub fn calculate_latest_major(
     let latest = available_versions
         .iter()
         .filter_map(|v| parse_version(v))
+        .filter(|v| v.pre.is_empty())
         .max()?;
 
     if latest > current {
