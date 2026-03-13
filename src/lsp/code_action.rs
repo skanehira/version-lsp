@@ -101,10 +101,46 @@ fn parse_pypi_version(version: &str) -> Option<(&str, &str)> {
     }
 }
 
+/// Compute deduplicated bump targets from smallest to largest jump.
+///
+/// Returns `(bare_version, label)` pairs with duplicates removed.
+fn compute_bump_targets<'a>(
+    current: &str,
+    versions: &[String],
+) -> Vec<(String, &'a str)> {
+    let patch = calculate_latest_patch(current, versions);
+    let next_minor = calculate_next_minor(current, versions);
+    let minor = calculate_latest_minor(current, versions);
+    let next_major = calculate_next_major(current, versions);
+    let major = calculate_latest_major(current, versions);
+
+    let mut seen = std::collections::HashSet::new();
+    let candidates = [
+        (patch, "latest patch"),
+        (next_minor, "next minor"),
+        (minor, "latest minor"),
+        (next_major, "next major"),
+        (major, "latest major"),
+    ];
+
+    candidates
+        .into_iter()
+        .filter_map(|(version, label)| {
+            let v = version?;
+            if seen.insert(v.clone()) {
+                Some((v, label))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Generate Code Actions for version bumping
 ///
-/// Creates up to 3 code actions (patch, minor, major) based on available versions.
-/// Returns an empty Vec if no newer versions are available or if versions are not in cache.
+/// Creates up to 5 code actions (patch, next minor, minor, next major, major)
+/// based on available versions. Returns an empty Vec if no newer versions are
+/// available or if versions are not in cache.
 pub fn generate_bump_code_actions<S: VersionStorer>(
     storer: &S,
     package: &PackageInfo,
@@ -121,38 +157,16 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
     let current = &package.version;
     let prefix = extract_version_prefix(current);
 
-    // Calculate bump targets — include "next" steps for when multiple versions behind
-    let patch = calculate_latest_patch(current, &versions);
-    let next_minor = calculate_next_minor(current, &versions);
-    let minor = calculate_latest_minor(current, &versions);
-    let next_major = calculate_next_major(current, &versions);
-    let major = calculate_latest_major(current, &versions);
-
-    // Collect unique bump targets with their labels, ordered from smallest to largest jump
-    let mut seen = std::collections::HashSet::new();
-    let bump_targets = [
-        (patch, "latest patch"),
-        (next_minor, "next minor"),
-        (minor, "latest minor"),
-        (next_major, "next major"),
-        (major, "latest major"),
-    ];
-
-    bump_targets
+    compute_bump_targets(current, &versions)
         .into_iter()
-        .filter_map(|(version, label)| {
-            let v = version?;
-            if seen.insert(v.clone()) {
-                let new_version = format!("{prefix}{v}");
-                Some(create_bump_action(
-                    &format!("Bump to {label}: {new_version}"),
-                    &new_version,
-                    package,
-                    uri,
-                ))
-            } else {
-                None
-            }
+        .map(|(v, label)| {
+            let new_version = format!("{prefix}{v}");
+            create_bump_action(
+                &format!("Bump to {label}: {new_version}"),
+                &new_version,
+                package,
+                uri,
+            )
         })
         .collect()
 }
@@ -216,59 +230,33 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
 
     if is_hash_only {
         // Pattern 1: Hash only - just offer the latest version
-        return generate_hash_only_actions(storer, package, uri, sha_fetcher, &versions).await;
+        return generate_hash_only_actions(storer, package, uri, sha_fetcher).await;
     }
 
     let current = &package.version;
     let prefix = extract_version_prefix(current);
 
-    // Calculate bump targets — include "next" steps for when multiple versions behind
-    let patch = calculate_latest_patch(current, &versions);
-    let next_minor = calculate_next_minor(current, &versions);
-    let minor = calculate_latest_minor(current, &versions);
-    let next_major = calculate_next_major(current, &versions);
-    let major = calculate_latest_major(current, &versions);
-
-    // Collect unique bump targets with their labels, ordered from smallest to largest jump
-    let mut seen = std::collections::HashSet::new();
-    let bump_targets = [
-        (patch, "latest patch"),
-        (next_minor, "next minor"),
-        (minor, "latest minor"),
-        (next_major, "next major"),
-        (major, "latest major"),
-    ];
-
     let mut actions = Vec::new();
 
-    for (version, label) in bump_targets {
-        let Some(v) = version else { continue };
-        if !seen.insert(v.clone()) {
-            continue;
-        }
-
+    for (v, label) in compute_bump_targets(current, &versions) {
         let new_version = format!("{prefix}{v}");
 
         // If package has a commit hash, we need to fetch the SHA for the new version
         if package.commit_hash.is_some() {
-            // Fetch the SHA for this version
             let sha_result = sha_fetcher.fetch_tag_sha(&package.name, &new_version).await;
 
             let Ok(new_sha) = sha_result else {
-                // SHA fetch failed, skip this code action
                 continue;
             };
 
-            let action = create_hash_bump_action(
+            actions.push(create_hash_bump_action(
                 &format!("Bump to {label}: {new_version}"),
                 &new_sha,
                 &new_version,
                 package,
                 uri,
-            );
-            actions.push(action);
+            ));
         } else {
-            // No commit hash, use the existing logic
             actions.push(create_bump_action(
                 &format!("Bump to {label}: {new_version}"),
                 &new_version,
@@ -290,7 +278,6 @@ async fn generate_hash_only_actions<S: VersionStorer, F: TagShaFetcher>(
     package: &PackageInfo,
     uri: &Url,
     sha_fetcher: &F,
-    _versions: &[String],
 ) -> Vec<CodeAction> {
     // For hash-only, we don't know the current version, so just offer the latest
     let Ok(Some(latest)) = storer.get_latest_version(package.registry_type, &package.name) else {
