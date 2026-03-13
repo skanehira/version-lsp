@@ -9,6 +9,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::{LspConfig, data_dir, db_path};
 use crate::lsp::code_action::{
     PackageIndex, generate_bump_code_actions, generate_bump_code_actions_with_sha,
+    generate_pin_code_actions, generate_pypi_operator_actions, generate_unpin_code_actions,
 };
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::refresh::{fetch_missing_packages, refresh_packages};
@@ -458,7 +459,7 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
         );
 
         // For GitHub Actions with commit hash, use async function to fetch SHA
-        let actions = if package.registry_type == RegistryType::GitHubActions
+        let mut actions = if package.registry_type == RegistryType::GitHubActions
             && package.commit_hash.is_some()
         {
             let sha_fetcher = GitHubRegistry::default();
@@ -466,6 +467,21 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
         } else {
             generate_bump_code_actions(&**storer, package, uri)
         };
+
+        // Append pin/unpin/operator actions based on registry type
+        match package.registry_type {
+            RegistryType::Npm
+            | RegistryType::CratesIo
+            | RegistryType::Jsr
+            | RegistryType::PnpmCatalog => {
+                actions.extend(generate_pin_code_actions(&**storer, package, uri));
+                actions.extend(generate_unpin_code_actions(&**storer, package, uri));
+            }
+            RegistryType::PyPI => {
+                actions.extend(generate_pypi_operator_actions(&**storer, package, uri));
+            }
+            _ => {}
+        }
 
         if actions.is_empty() {
             return Ok(None);
