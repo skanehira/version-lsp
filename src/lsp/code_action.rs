@@ -1277,6 +1277,17 @@ mod tests {
         assert_eq!(actions[1].title, "Switch to compatible: ~=2.0.0");
     }
 
+    #[test]
+    fn generate_pypi_operator_actions_returns_empty_for_bare_version() {
+        let storer = MockStorer::new(vec!["2.28.0", "3.0.0"]);
+        let package = make_pypi_package("requests", "2.28.0", 3, 15);
+        let uri = Url::parse("file:///test/pyproject.toml").unwrap();
+
+        let actions = generate_pypi_operator_actions(&storer, &package, &uri);
+
+        assert!(actions.is_empty());
+    }
+
     // ── Helper function tests ──
 
     #[rstest]
