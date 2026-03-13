@@ -46,12 +46,18 @@ impl<'a> PackageIndex<'a> {
     }
 }
 
-/// Extract version prefix (^, ~, >=, <=, >, <, =, v) from a version string
+/// Extract version prefix (^, ~, ~=, ==, !=, >=, <=, >, <, =, v) from a version string
 fn extract_version_prefix(version: &str) -> &str {
-    if version.starts_with(">=") {
+    if version.starts_with("~=") {
+        "~="
+    } else if version.starts_with(">=") {
         ">="
     } else if version.starts_with("<=") {
         "<="
+    } else if version.starts_with("==") {
+        "=="
+    } else if version.starts_with("!=") {
+        "!="
     } else if version.starts_with('>') {
         ">"
     } else if version.starts_with('<') {
@@ -66,6 +72,32 @@ fn extract_version_prefix(version: &str) -> &str {
         "v"
     } else {
         ""
+    }
+}
+
+/// Returns true if the prefix is a semver range prefix (^ or ~)
+fn is_semver_range_prefix(prefix: &str) -> bool {
+    prefix == "^" || prefix == "~"
+}
+
+/// Strip version prefix, returning the bare version string
+fn strip_version_prefix(version: &str) -> &str {
+    let prefix = extract_version_prefix(version);
+    &version[prefix.len()..]
+}
+
+/// Check if a PyPI version spec is simple (no compound range with comma)
+fn is_simple_pypi_version(version: &str) -> bool {
+    !version.contains(',')
+}
+
+/// Extract PyPI operator and bare version from a version spec
+fn parse_pypi_version(version: &str) -> Option<(&str, &str)> {
+    let prefix = extract_version_prefix(version);
+    if matches!(prefix, "==" | ">=" | "~=") {
+        Some((prefix, &version[prefix.len()..]))
+    } else {
+        None
     }
 }
 
@@ -279,6 +311,187 @@ async fn generate_hash_only_actions<S: VersionStorer, F: TagShaFetcher>(
         package,
         uri,
     )]
+}
+
+/// Generate Pin code actions for semver registries (npm, crates, jsr, pnpm catalogs)
+///
+/// When a version has a range prefix (^ or ~), offers to pin (remove the prefix)
+/// to the current version or the latest patch/minor/major.
+pub fn generate_pin_code_actions<S: VersionStorer>(
+    storer: &S,
+    package: &PackageInfo,
+    uri: &Url,
+) -> Vec<CodeAction> {
+    let current = &package.version;
+    let prefix = extract_version_prefix(current);
+
+    if !is_semver_range_prefix(prefix) {
+        return vec![];
+    }
+
+    let bare_current = strip_version_prefix(current);
+
+    let Ok(versions) = storer.get_versions(package.registry_type, &package.name) else {
+        return vec![];
+    };
+
+    let mut actions = vec![create_bump_action(
+        &format!("Pin to current: {bare_current}"),
+        bare_current,
+        package,
+        uri,
+    )];
+
+    let patch = calculate_latest_patch(current, &versions);
+    let next_minor = calculate_next_minor(current, &versions);
+    let minor = calculate_latest_minor(current, &versions);
+    let next_major = calculate_next_major(current, &versions);
+    let major = calculate_latest_major(current, &versions);
+
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(bare_current.to_string());
+    let pin_targets = [
+        (patch, "latest patch"),
+        (next_minor, "next minor"),
+        (minor, "latest minor"),
+        (next_major, "next major"),
+        (major, "latest major"),
+    ];
+
+    for (version, label) in pin_targets {
+        let Some(v) = version else { continue };
+        if !seen.insert(v.clone()) {
+            continue;
+        }
+        actions.push(create_bump_action(
+            &format!("Pin to {label}: {v}"),
+            &v,
+            package,
+            uri,
+        ));
+    }
+
+    actions
+}
+
+/// Generate Unpin code actions for semver registries (npm, crates, jsr, pnpm catalogs)
+///
+/// When a version has no range prefix, offers to add ^ or ~ to the current
+/// version and to the latest major version.
+pub fn generate_unpin_code_actions<S: VersionStorer>(
+    storer: &S,
+    package: &PackageInfo,
+    uri: &Url,
+) -> Vec<CodeAction> {
+    let current = &package.version;
+    let prefix = extract_version_prefix(current);
+
+    // Only offer unpin when there's no prefix (bare version)
+    if !prefix.is_empty() {
+        return vec![];
+    }
+
+    let Ok(versions) = storer.get_versions(package.registry_type, &package.name) else {
+        return vec![];
+    };
+
+    let mut actions = vec![
+        create_bump_action(
+            &format!("Add ^ to current: ^{current}"),
+            &format!("^{current}"),
+            package,
+            uri,
+        ),
+        create_bump_action(
+            &format!("Add ~ to current: ~{current}"),
+            &format!("~{current}"),
+            package,
+            uri,
+        ),
+    ];
+
+    // Also offer ^/~ with latest major if different from current
+    let major = calculate_latest_major(current, &versions);
+    if let Some(v) = major {
+        actions.push(create_bump_action(
+            &format!("Add ^ to latest: ^{v}"),
+            &format!("^{v}"),
+            package,
+            uri,
+        ));
+        actions.push(create_bump_action(
+            &format!("Add ~ to latest: ~{v}"),
+            &format!("~{v}"),
+            package,
+            uri,
+        ));
+    }
+
+    actions
+}
+
+/// Generate PyPI operator-switch code actions
+///
+/// For simple PyPI version specs (no compound ranges), offers to switch between
+/// == (pin), >= (minimum), and ~= (compatible release) operators.
+pub fn generate_pypi_operator_actions<S: VersionStorer>(
+    storer: &S,
+    package: &PackageInfo,
+    uri: &Url,
+) -> Vec<CodeAction> {
+    let current = &package.version;
+
+    if !is_simple_pypi_version(current) {
+        return vec![];
+    }
+
+    let Some((op, bare_version)) = parse_pypi_version(current) else {
+        return vec![];
+    };
+
+    let Ok(versions) = storer.get_versions(package.registry_type, &package.name) else {
+        return vec![];
+    };
+
+    let latest_major = calculate_latest_major(current, &versions);
+
+    let alternatives: &[(&str, &str)] = match op {
+        ">=" => &[("==", "pin"), ("~=", "compatible")],
+        "==" => &[(">=", "minimum"), ("~=", "compatible")],
+        "~=" => &[("==", "pin"), (">=", "minimum")],
+        _ => return vec![],
+    };
+
+    let mut actions = Vec::new();
+
+    for &(alt_op, label) in alternatives {
+        let new_version = format!("{alt_op}{bare_version}");
+        actions.push(create_bump_action(
+            &format!("Switch to {label}: {new_version}"),
+            &new_version,
+            package,
+            uri,
+        ));
+    }
+
+    // Also offer operator switch with latest version
+    if let Some(ref latest) = latest_major {
+        for &(alt_op, label) in alternatives {
+            let new_version = format!("{alt_op}{latest}");
+            // Skip if same as current
+            if new_version == *current {
+                continue;
+            }
+            actions.push(create_bump_action(
+                &format!("Switch to {label} (latest): {new_version}"),
+                &new_version,
+                package,
+                uri,
+            ));
+        }
+    }
+
+    actions
 }
 
 /// Create a code action for hash-based version bumping (GitHub Actions)
@@ -515,6 +728,7 @@ mod tests {
         assert_eq!(actions[0].title, "Bump to latest patch: 4.17.21");
         assert_eq!(actions[1].title, "Bump to latest minor: 4.18.0");
         assert_eq!(actions[2].title, "Bump to latest major: 5.0.0");
+        // next minor/major dedup with latest since only one step ahead
     }
 
     #[test]
@@ -580,6 +794,7 @@ mod tests {
         assert_eq!(actions[0].title, "Bump to latest patch: ^4.17.21");
         assert_eq!(actions[1].title, "Bump to latest minor: ^4.18.0");
         assert_eq!(actions[2].title, "Bump to latest major: ^5.0.0");
+        // next minor/major dedup with latest since only one step ahead
 
         // Verify TextEdit preserves prefix
         let edit = actions[0].edit.as_ref().unwrap();
@@ -627,8 +842,7 @@ mod tests {
 
     #[test]
     fn generate_bump_code_actions_shows_next_and_latest_major_when_multiple_behind() {
-        let storer =
-            MockStorer::new(vec!["2.0.0", "3.0.0", "3.5.0", "4.0.0", "4.2.0", "5.0.0"]);
+        let storer = MockStorer::new(vec!["2.0.0", "3.0.0", "3.5.0", "4.0.0", "4.2.0", "5.0.0"]);
         let package = make_package("lodash", "^2.0.0", 3, 15, 6);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
@@ -866,5 +1080,258 @@ mod tests {
         assert_eq!(edits[0].new_text, "v4.0.0");
         assert_eq!(edits[0].range.start.character, 31);
         assert_eq!(edits[0].range.end.character, 37); // 31 + 6 (version length)
+    }
+
+    // ── Pin code action tests ──
+
+    #[test]
+    fn generate_pin_code_actions_with_caret_prefix() {
+        let storer = MockStorer::new(vec!["4.17.19", "4.17.21", "4.18.0", "5.0.0"]);
+        let package = make_package("lodash", "^4.17.19", 3, 15, 8);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_pin_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 4);
+        assert_eq!(actions[0].title, "Pin to current: 4.17.19");
+        assert_eq!(actions[1].title, "Pin to latest patch: 4.17.21");
+        assert_eq!(actions[2].title, "Pin to latest minor: 4.18.0");
+        assert_eq!(actions[3].title, "Pin to latest major: 5.0.0");
+
+        // Verify text edit removes prefix
+        let edit = actions[0].edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let edits = changes.get(&uri).unwrap();
+        assert_eq!(edits[0].new_text, "4.17.19");
+    }
+
+    #[test]
+    fn generate_pin_code_actions_with_tilde_prefix() {
+        let storer = MockStorer::new(vec!["4.17.19", "4.17.21"]);
+        let package = make_package("lodash", "~4.17.19", 3, 15, 8);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_pin_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].title, "Pin to current: 4.17.19");
+        assert_eq!(actions[1].title, "Pin to latest patch: 4.17.21");
+    }
+
+    #[test]
+    fn generate_pin_code_actions_returns_empty_without_prefix() {
+        let storer = MockStorer::new(vec!["4.17.19", "5.0.0"]);
+        let package = make_package("lodash", "4.17.19", 3, 15, 7);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_pin_code_actions(&storer, &package, &uri);
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn generate_pin_code_actions_deduplicates_when_already_latest() {
+        let storer = MockStorer::new(vec!["4.17.21"]);
+        let package = make_package("lodash", "^4.17.21", 3, 15, 8);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_pin_code_actions(&storer, &package, &uri);
+
+        // Only "Pin to current: 4.17.21" — no duplicates
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Pin to current: 4.17.21");
+    }
+
+    // ── Unpin code action tests ──
+
+    #[test]
+    fn generate_unpin_code_actions_with_bare_version() {
+        let storer = MockStorer::new(vec!["4.17.19", "5.0.0"]);
+        let package = make_package("lodash", "4.17.19", 3, 15, 7);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_unpin_code_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 4);
+        assert_eq!(actions[0].title, "Add ^ to current: ^4.17.19");
+        assert_eq!(actions[1].title, "Add ~ to current: ~4.17.19");
+        assert_eq!(actions[2].title, "Add ^ to latest: ^5.0.0");
+        assert_eq!(actions[3].title, "Add ~ to latest: ~5.0.0");
+
+        // Verify text edit adds prefix
+        let edit = actions[0].edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let edits = changes.get(&uri).unwrap();
+        assert_eq!(edits[0].new_text, "^4.17.19");
+    }
+
+    #[test]
+    fn generate_unpin_code_actions_returns_empty_with_prefix() {
+        let storer = MockStorer::new(vec!["4.17.19", "5.0.0"]);
+        let package = make_package("lodash", "^4.17.19", 3, 15, 8);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_unpin_code_actions(&storer, &package, &uri);
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn generate_unpin_code_actions_without_newer_version() {
+        let storer = MockStorer::new(vec!["4.17.19"]);
+        let package = make_package("lodash", "4.17.19", 3, 15, 7);
+        let uri = Url::parse("file:///test/package.json").unwrap();
+
+        let actions = generate_unpin_code_actions(&storer, &package, &uri);
+
+        // Only current ^ and ~ — no latest since already at latest
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].title, "Add ^ to current: ^4.17.19");
+        assert_eq!(actions[1].title, "Add ~ to current: ~4.17.19");
+    }
+
+    // ── PyPI operator action tests ──
+
+    fn make_pypi_package(name: &str, version: &str, line: u32, column: u32) -> PackageInfo {
+        PackageInfo {
+            name: name.to_string(),
+            version: version.to_string(),
+            commit_hash: None,
+            registry_type: RegistryType::PyPI,
+            start_offset: 0,
+            end_offset: version.len(),
+            line: line as usize,
+            column: column as usize,
+            extra_info: None,
+        }
+    }
+
+    #[test]
+    fn generate_pypi_operator_actions_from_gte() {
+        let storer = MockStorer::new(vec!["2.28.0", "2.32.0"]);
+        let package = make_pypi_package("requests", ">=2.28.0", 3, 15);
+        let uri = Url::parse("file:///test/pyproject.toml").unwrap();
+
+        let actions = generate_pypi_operator_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 4);
+        assert_eq!(actions[0].title, "Switch to pin: ==2.28.0");
+        assert_eq!(actions[1].title, "Switch to compatible: ~=2.28.0");
+        assert_eq!(actions[2].title, "Switch to pin (latest): ==2.32.0");
+        assert_eq!(actions[3].title, "Switch to compatible (latest): ~=2.32.0");
+    }
+
+    #[test]
+    fn generate_pypi_operator_actions_from_eq() {
+        let storer = MockStorer::new(vec!["2.0.0", "3.0.0"]);
+        let package = make_pypi_package("django", "==2.0.0", 3, 15);
+        let uri = Url::parse("file:///test/pyproject.toml").unwrap();
+
+        let actions = generate_pypi_operator_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 4);
+        assert_eq!(actions[0].title, "Switch to minimum: >=2.0.0");
+        assert_eq!(actions[1].title, "Switch to compatible: ~=2.0.0");
+        assert_eq!(actions[2].title, "Switch to minimum (latest): >=3.0.0");
+        assert_eq!(actions[3].title, "Switch to compatible (latest): ~=3.0.0");
+    }
+
+    #[test]
+    fn generate_pypi_operator_actions_from_compatible() {
+        let storer = MockStorer::new(vec!["1.21.0", "1.26.0"]);
+        let package = make_pypi_package("numpy", "~=1.21.0", 3, 15);
+        let uri = Url::parse("file:///test/pyproject.toml").unwrap();
+
+        let actions = generate_pypi_operator_actions(&storer, &package, &uri);
+
+        assert_eq!(actions.len(), 4);
+        assert_eq!(actions[0].title, "Switch to pin: ==1.21.0");
+        assert_eq!(actions[1].title, "Switch to minimum: >=1.21.0");
+        assert_eq!(actions[2].title, "Switch to pin (latest): ==1.26.0");
+        assert_eq!(actions[3].title, "Switch to minimum (latest): >=1.26.0");
+    }
+
+    #[test]
+    fn generate_pypi_operator_actions_returns_empty_for_compound_range() {
+        let storer = MockStorer::new(vec!["3.2.0", "4.0.0"]);
+        let package = make_pypi_package("django", ">=3.2, <4.0", 3, 15);
+        let uri = Url::parse("file:///test/pyproject.toml").unwrap();
+
+        let actions = generate_pypi_operator_actions(&storer, &package, &uri);
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn generate_pypi_operator_actions_skips_duplicate_with_latest() {
+        // When current version IS the latest, don't duplicate with "(latest)" variants
+        let storer = MockStorer::new(vec!["2.0.0"]);
+        let package = make_pypi_package("requests", ">=2.0.0", 3, 15);
+        let uri = Url::parse("file:///test/pyproject.toml").unwrap();
+
+        let actions = generate_pypi_operator_actions(&storer, &package, &uri);
+
+        // Only current-version alternatives, no latest (since current == latest)
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].title, "Switch to pin: ==2.0.0");
+        assert_eq!(actions[1].title, "Switch to compatible: ~=2.0.0");
+    }
+
+    // ── Helper function tests ──
+
+    #[rstest]
+    #[case("^", true)]
+    #[case("~", true)]
+    #[case(">=", false)]
+    #[case("==", false)]
+    #[case("~=", false)]
+    #[case("v", false)]
+    #[case("", false)]
+    fn test_is_semver_range_prefix(#[case] prefix: &str, #[case] expected: bool) {
+        assert_eq!(is_semver_range_prefix(prefix), expected);
+    }
+
+    #[rstest]
+    #[case("^4.17.19", "4.17.19")]
+    #[case("~4.17.19", "4.17.19")]
+    #[case("4.17.19", "4.17.19")]
+    #[case(">=2.0.0", "2.0.0")]
+    #[case("==2.0.0", "2.0.0")]
+    #[case("~=1.4.2", "1.4.2")]
+    #[case("v1.0.0", "1.0.0")]
+    fn test_strip_version_prefix(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(strip_version_prefix(input), expected);
+    }
+
+    #[rstest]
+    #[case(">=2.0.0", true)]
+    #[case("==2.0.0", true)]
+    #[case("~=1.4.2", true)]
+    #[case(">=2.0, <3.0", false)]
+    #[case("!=2.0.0", true)]
+    fn test_is_simple_pypi_version(#[case] input: &str, #[case] expected: bool) {
+        assert_eq!(is_simple_pypi_version(input), expected);
+    }
+
+    #[rstest]
+    #[case(">=2.0.0", Some((">=", "2.0.0")))]
+    #[case("==2.0.0", Some(("==", "2.0.0")))]
+    #[case("~=1.4.2", Some(("~=", "1.4.2")))]
+    #[case("!=2.0.0", None)]
+    #[case("2.0.0", None)]
+    #[case("^4.0.0", None)]
+    fn test_parse_pypi_version(#[case] input: &str, #[case] expected: Option<(&str, &str)>) {
+        assert_eq!(parse_pypi_version(input), expected);
+    }
+
+    #[rstest]
+    #[case("~=1.4.2", "~=")]
+    #[case("==2.0.0", "==")]
+    #[case("!=2.0.0", "!=")]
+    #[case(">=2.0.0", ">=")]
+    #[case("^4.0.0", "^")]
+    #[case("~4.0.0", "~")]
+    fn test_extract_version_prefix_pypi_operators(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(extract_version_prefix(input), expected);
     }
 }
