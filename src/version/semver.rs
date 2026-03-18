@@ -113,6 +113,56 @@ pub fn calculate_latest_major(
     }
 }
 
+/// Calculate the next minor version (current.minor + 1 series)
+///
+/// Returns the latest version within the next minor series, or None
+/// if no such version exists. Only useful when multiple minors behind.
+pub fn calculate_next_minor(
+    current_version: &str,
+    available_versions: &[String],
+) -> Option<String> {
+    let current = parse_version(current_version)?;
+
+    let next_minor_num = available_versions
+        .iter()
+        .filter_map(|v| parse_version(v))
+        .filter(|v| v.major == current.major && v.minor > current.minor)
+        .map(|v| v.minor)
+        .min()?;
+
+    available_versions
+        .iter()
+        .filter_map(|v| parse_version(v))
+        .filter(|v| v.major == current.major && v.minor == next_minor_num)
+        .max()
+        .map(|v| v.to_string())
+}
+
+/// Calculate the next major version (current.major + 1 series)
+///
+/// Returns the latest version within the next major series, or None
+/// if no such version exists. Only useful when multiple majors behind.
+pub fn calculate_next_major(
+    current_version: &str,
+    available_versions: &[String],
+) -> Option<String> {
+    let current = parse_version(current_version)?;
+
+    let next_major_num = available_versions
+        .iter()
+        .filter_map(|v| parse_version(v))
+        .filter(|v| v.major > current.major)
+        .map(|v| v.major)
+        .min()?;
+
+    available_versions
+        .iter()
+        .filter_map(|v| parse_version(v))
+        .filter(|v| v.major == next_major_num)
+        .max()
+        .map(|v| v.to_string())
+}
+
 /// Check if a version string is a prerelease version.
 /// Returns true if the version has a prerelease suffix (e.g., -alpha, -beta, -rc).
 pub fn is_prerelease(version: &str) -> bool {
@@ -200,6 +250,43 @@ mod tests {
             calculate_latest_major(current, &available_strings),
             expected
         );
+    }
+
+    #[rstest]
+    #[case("1.2.3", &["1.2.3", "1.3.0", "1.4.0", "1.4.5", "2.0.0"], Some("1.3.0".to_string()))]
+    #[case("1.2.3", &["1.2.3", "1.3.0", "1.3.5"], Some("1.3.5".to_string()))] // latest within next minor
+    #[case("1.2.3", &["1.2.3", "1.3.0"], Some("1.3.0".to_string()))] // single next minor
+    #[case("1.5.0", &["1.2.3", "1.3.0", "1.5.0"], None)] // already at latest minor
+    #[case("1.2.3", &["1.2.3", "2.0.0"], None)] // no higher minor in same major
+    #[case("1.2.3", &["1.2.3", "1.3.0-beta.1", "1.4.0"], Some("1.3.0-beta.1".to_string()))] // prerelease is next minor
+    #[case("1.2.3", &["1.2.3", "1.3.0-beta.1"], Some("1.3.0-beta.1".to_string()))] // prerelease minor included
+    #[case("invalid", &["1.3.0"], None)]
+    #[case("1.2.3", &[], None)]
+    fn test_calculate_next_minor(
+        #[case] current: &str,
+        #[case] available: &[&str],
+        #[case] expected: Option<String>,
+    ) {
+        let available_strings: Vec<String> = available.iter().map(|s| s.to_string()).collect();
+        assert_eq!(calculate_next_minor(current, &available_strings), expected);
+    }
+
+    #[rstest]
+    #[case("1.2.3", &["1.2.3", "2.0.0", "3.0.0", "3.5.0"], Some("2.0.0".to_string()))]
+    #[case("1.2.3", &["1.2.3", "2.0.0", "2.3.0"], Some("2.3.0".to_string()))] // latest within next major
+    #[case("1.2.3", &["1.2.3", "2.0.0"], Some("2.0.0".to_string()))] // single next major
+    #[case("3.0.0", &["1.2.3", "2.0.0", "3.0.0"], None)] // already at latest major
+    #[case("1.2.3", &["1.2.3", "2.0.0-canary.123", "3.0.0"], Some("2.0.0-canary.123".to_string()))] // prerelease is next major
+    #[case("1.2.3", &["1.2.3", "2.0.0-alpha.1"], Some("2.0.0-alpha.1".to_string()))] // prerelease major included
+    #[case("invalid", &["2.0.0"], None)]
+    #[case("1.2.3", &[], None)]
+    fn test_calculate_next_major(
+        #[case] current: &str,
+        #[case] available: &[&str],
+        #[case] expected: Option<String>,
+    ) {
+        let available_strings: Vec<String> = available.iter().map(|s| s.to_string()).collect();
+        assert_eq!(calculate_next_major(current, &available_strings), expected);
     }
 
     // npm / crates.io / JSR / pnpm format
