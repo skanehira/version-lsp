@@ -1,7 +1,9 @@
-//! Code action generation for version bumping
+//! Code action generation for version bumping and constraint switching
 
+mod constraint;
 mod upgrade;
 
+pub use constraint::{generate_constraint_code_actions, generate_pypi_constraint_code_actions};
 pub use upgrade::{generate_upgrade_code_actions, generate_upgrade_code_actions_with_sha};
 
 use crate::parser::types::PackageInfo;
@@ -44,12 +46,18 @@ impl<'a> PackageIndex<'a> {
     }
 }
 
-/// Extract version prefix (^, ~, >=, <=, >, <, =, v) from a version string
+/// Extract version prefix (^, ~, ~=, ==, !=, >=, <=, >, <, =, v) from a version string
 fn extract_version_prefix(version: &str) -> &str {
-    if version.starts_with(">=") {
+    if version.starts_with("~=") {
+        "~="
+    } else if version.starts_with(">=") {
         ">="
     } else if version.starts_with("<=") {
         "<="
+    } else if version.starts_with("==") {
+        "=="
+    } else if version.starts_with("!=") {
+        "!="
     } else if version.starts_with('>') {
         ">"
     } else if version.starts_with('<') {
@@ -67,6 +75,13 @@ fn extract_version_prefix(version: &str) -> &str {
     }
 }
 
+/// Strip version prefix, returning the bare version string
+fn strip_version_prefix(version: &str) -> &str {
+    let prefix = extract_version_prefix(version);
+    &version[prefix.len()..]
+}
+
+/// Create a code action that replaces a package's version text
 fn create_bump_action(
     title: &str,
     new_version: &str,

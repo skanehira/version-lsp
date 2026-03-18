@@ -54,8 +54,8 @@ fn compute_bump_targets<'a>(current: &str, versions: &[String]) -> Vec<(String, 
 /// Generate upgrade code actions
 ///
 /// Creates up to 5 code actions (patch, next minor, minor, next major, major)
-/// based on available versions. Returns an empty Vec if no newer versions are
-/// available or if versions are not in cache.
+/// based on available versions. Preserves the current version prefix.
+/// Returns an empty Vec if no newer versions are available or if versions are not in cache.
 pub fn generate_upgrade_code_actions<S: VersionStorer>(
     storer: &S,
     package: &PackageInfo,
@@ -111,7 +111,7 @@ pub async fn generate_upgrade_code_actions_with_sha<S: VersionStorer, F: TagShaF
 
     if is_hash_only {
         // Pattern 1: Hash only - just offer the latest version
-        return generate_hash_only_actions(storer, package, uri, sha_fetcher, &versions).await;
+        return generate_hash_only_actions(storer, package, uri, sha_fetcher).await;
     }
 
     let current = &package.version;
@@ -159,7 +159,6 @@ async fn generate_hash_only_actions<S: VersionStorer, F: TagShaFetcher>(
     package: &PackageInfo,
     uri: &Url,
     sha_fetcher: &F,
-    _versions: &[String],
 ) -> Vec<CodeAction> {
     // For hash-only, we don't know the current version, so just offer the latest
     let Ok(Some(latest)) = storer.get_latest_version(package.registry_type, &package.name) else {
@@ -366,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_returns_three_actions_when_all_bumps_available() {
+    fn upgrade_returns_three_actions_when_all_levels_available() {
         let storer = MockStorer::new(vec!["4.17.19", "4.17.21", "4.18.0", "5.0.0"]);
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -380,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_returns_empty_when_no_versions_in_cache() {
+    fn upgrade_returns_empty_when_no_versions_in_cache() {
         let storer = MockStorer::new(vec![]);
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -391,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_returns_empty_when_already_latest() {
+    fn upgrade_returns_empty_when_already_latest() {
         let storer = MockStorer::new(vec!["5.0.0"]);
         let package = make_package("lodash", "5.0.0", 3, 15, 5);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -402,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_creates_correct_text_edit() {
+    fn upgrade_creates_correct_text_edit() {
         let storer = MockStorer::new(vec!["4.17.19", "4.17.21"]);
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -431,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_preserves_caret_prefix() {
+    fn upgrade_preserves_caret_prefix() {
         let storer = MockStorer::new(vec!["4.17.19", "4.17.21", "4.18.0", "5.0.0"]);
         let package = make_package("lodash", "^4.17.19", 3, 15, 8);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -451,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_preserves_tilde_prefix() {
+    fn upgrade_preserves_tilde_prefix() {
         let storer = MockStorer::new(vec!["4.17.19", "4.17.21"]);
         let package = make_package("lodash", "~4.17.19", 3, 15, 8);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -463,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_preserves_gte_prefix() {
+    fn upgrade_preserves_gte_prefix() {
         let storer = MockStorer::new(vec!["4.17.19", "5.0.0"]);
         let package = make_package("lodash", ">=4.17.19", 3, 15, 9);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -475,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_preserves_v_prefix_for_go() {
+    fn upgrade_preserves_v_prefix_for_go() {
         let storer = MockStorer::new(vec!["0.14.0", "0.15.0", "1.0.0"]);
         let package = make_package("golang.org/x/text", "v0.14.0", 3, 15, 7);
         let uri = Url::parse("file:///test/go.mod").unwrap();
@@ -488,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_shows_next_and_latest_major_when_multiple_behind() {
+    fn upgrade_shows_next_and_latest_major_when_multiple_behind() {
         let storer = MockStorer::new(vec!["2.0.0", "3.0.0", "3.5.0", "4.0.0", "4.2.0", "5.0.0"]);
         let package = make_package("lodash", "^2.0.0", 3, 15, 6);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -501,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_upgrade_code_actions_shows_next_and_latest_minor_when_multiple_behind() {
+    fn upgrade_shows_next_and_latest_minor_when_multiple_behind() {
         let storer = MockStorer::new(vec!["4.17.0", "4.18.0", "4.18.5", "4.19.0", "4.20.0"]);
         let package = make_package("lodash", "^4.17.0", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
@@ -604,7 +603,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_upgrade_code_actions_with_sha_pattern1_hash_only() {
+    async fn upgrade_with_sha_pattern1_hash_only() {
         let storer = MockStorer::new(vec!["v4.1.5", "v4.1.6"]);
         let sha_fetcher =
             MockTagShaFetcher::new(vec![("v4.1.6", "newsha1234567890newsha1234567890newsha12")]);
@@ -638,7 +637,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_upgrade_code_actions_with_sha_pattern2_hash_with_comment() {
+    async fn upgrade_with_sha_pattern2_hash_with_comment() {
         let storer = MockStorer::new(vec!["v4.1.5", "v4.1.6"]);
         let sha_fetcher =
             MockTagShaFetcher::new(vec![("v4.1.6", "newsha1234567890newsha1234567890newsha12")]);
@@ -674,7 +673,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_upgrade_code_actions_with_sha_returns_empty_when_sha_fetch_fails() {
+    async fn upgrade_with_sha_returns_empty_when_sha_fetch_fails() {
         let storer = MockStorer::new(vec!["v4.1.5", "v4.1.6"]);
         let sha_fetcher = MockTagShaFetcher::failing();
         let package = make_github_actions_package_hash_only(
@@ -693,7 +692,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_upgrade_code_actions_with_sha_pattern3_version_tag_only() {
+    async fn upgrade_with_sha_pattern3_version_tag_only() {
         let storer = MockStorer::new(vec!["3.0.0", "4.0.0"]);
         let sha_fetcher = MockTagShaFetcher::new(vec![]);
         let package = make_package("actions/checkout", "v3.0.0", 4, 31, 6);
@@ -712,5 +711,18 @@ mod tests {
         assert_eq!(edits[0].new_text, "v4.0.0");
         assert_eq!(edits[0].range.start.character, 31);
         assert_eq!(edits[0].range.end.character, 37);
+    }
+
+    #[rstest]
+    #[case("^4.17.19", "^")]
+    #[case("~4.17.19", "~")]
+    #[case("4.17.19", "")]
+    #[case(">=2.0.0", ">=")]
+    #[case("==2.0.0", "==")]
+    #[case("~=1.4.2", "~=")]
+    #[case("!=2.0.0", "!=")]
+    #[case("v1.0.0", "v")]
+    fn test_extract_version_prefix(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(extract_version_prefix(input), expected);
     }
 }

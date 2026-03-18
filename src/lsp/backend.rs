@@ -8,7 +8,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::{LspConfig, data_dir, db_path};
 use crate::lsp::code_action::{
-    PackageIndex, generate_upgrade_code_actions, generate_upgrade_code_actions_with_sha,
+    PackageIndex, generate_constraint_code_actions, generate_pypi_constraint_code_actions,
+    generate_upgrade_code_actions, generate_upgrade_code_actions_with_sha,
 };
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::refresh::{fetch_missing_packages, refresh_packages};
@@ -458,7 +459,7 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
         );
 
         // For GitHub Actions with commit hash, use async function to fetch SHA
-        let actions = if package.registry_type == RegistryType::GitHubActions
+        let mut actions = if package.registry_type == RegistryType::GitHubActions
             && package.commit_hash.is_some()
         {
             let sha_fetcher = GitHubRegistry::default();
@@ -466,6 +467,20 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
         } else {
             generate_upgrade_code_actions(&**storer, package, uri)
         };
+
+        // Append constraint actions based on registry type
+        match package.registry_type {
+            RegistryType::Npm
+            | RegistryType::CratesIo
+            | RegistryType::Jsr
+            | RegistryType::PnpmCatalog => {
+                actions.extend(generate_constraint_code_actions(package, uri));
+            }
+            RegistryType::PyPI => {
+                actions.extend(generate_pypi_constraint_code_actions(package, uri));
+            }
+            _ => {}
+        }
 
         if actions.is_empty() {
             return Ok(None);
