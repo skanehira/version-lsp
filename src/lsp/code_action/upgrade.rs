@@ -51,12 +51,12 @@ fn compute_bump_targets<'a>(current: &str, versions: &[String]) -> Vec<(String, 
         .collect()
 }
 
-/// Generate Code Actions for version bumping
+/// Generate upgrade code actions
 ///
 /// Creates up to 5 code actions (patch, next minor, minor, next major, major)
 /// based on available versions. Returns an empty Vec if no newer versions are
 /// available or if versions are not in cache.
-pub fn generate_bump_code_actions<S: VersionStorer>(
+pub fn generate_upgrade_code_actions<S: VersionStorer>(
     storer: &S,
     package: &PackageInfo,
     uri: &Url,
@@ -77,7 +77,7 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
         .map(|(v, label)| {
             let new_version = format!("{prefix}{v}");
             create_bump_action(
-                &format!("Bump to {label}: {new_version}"),
+                &format!("Upgrade to {label}: {new_version}"),
                 &new_version,
                 package,
                 uri,
@@ -86,12 +86,12 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
         .collect()
 }
 
-/// Generate Code Actions for version bumping with SHA fetching for GitHub Actions
+/// Generate upgrade code actions with SHA fetching for GitHub Actions
 ///
 /// When the package has a commit hash (GitHub Actions), this function will fetch
 /// the commit SHA for each bump target and generate code actions that replace
 /// the hash (and optionally the comment) with the new SHA and version.
-pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetcher>(
+pub async fn generate_upgrade_code_actions_with_sha<S: VersionStorer, F: TagShaFetcher>(
     storer: &S,
     package: &PackageInfo,
     uri: &Url,
@@ -131,7 +131,7 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
             };
 
             actions.push(create_hash_bump_action(
-                &format!("Bump to {label}: {new_version}"),
+                &format!("Upgrade to {label}: {new_version}"),
                 &new_sha,
                 &new_version,
                 package,
@@ -139,7 +139,7 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
             ));
         } else {
             actions.push(create_bump_action(
-                &format!("Bump to {label}: {new_version}"),
+                &format!("Upgrade to {label}: {new_version}"),
                 &new_version,
                 package,
                 uri,
@@ -174,7 +174,7 @@ async fn generate_hash_only_actions<S: VersionStorer, F: TagShaFetcher>(
     };
 
     vec![create_hash_bump_action(
-        &format!("Bump to latest: {latest}"),
+        &format!("Upgrade to latest: {latest}"),
         &new_sha,
         &latest,
         package,
@@ -366,48 +366,48 @@ mod tests {
     }
 
     #[test]
-    fn generate_bump_code_actions_returns_three_actions_when_all_bumps_available() {
+    fn generate_upgrade_code_actions_returns_three_actions_when_all_bumps_available() {
         let storer = MockStorer::new(vec!["4.17.19", "4.17.21", "4.18.0", "5.0.0"]);
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert_eq!(actions.len(), 3);
-        assert_eq!(actions[0].title, "Bump to latest patch: 4.17.21");
-        assert_eq!(actions[1].title, "Bump to latest minor: 4.18.0");
-        assert_eq!(actions[2].title, "Bump to latest major: 5.0.0");
+        assert_eq!(actions[0].title, "Upgrade to latest patch: 4.17.21");
+        assert_eq!(actions[1].title, "Upgrade to latest minor: 4.18.0");
+        assert_eq!(actions[2].title, "Upgrade to latest major: 5.0.0");
     }
 
     #[test]
-    fn generate_bump_code_actions_returns_empty_when_no_versions_in_cache() {
+    fn generate_upgrade_code_actions_returns_empty_when_no_versions_in_cache() {
         let storer = MockStorer::new(vec![]);
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert!(actions.is_empty());
     }
 
     #[test]
-    fn generate_bump_code_actions_returns_empty_when_already_latest() {
+    fn generate_upgrade_code_actions_returns_empty_when_already_latest() {
         let storer = MockStorer::new(vec!["5.0.0"]);
         let package = make_package("lodash", "5.0.0", 3, 15, 5);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert!(actions.is_empty());
     }
 
     #[test]
-    fn generate_bump_code_actions_creates_correct_text_edit() {
+    fn generate_upgrade_code_actions_creates_correct_text_edit() {
         let storer = MockStorer::new(vec!["4.17.19", "4.17.21"]);
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert_eq!(actions.len(), 1);
         let edit = actions[0].edit.as_ref().unwrap();
@@ -431,17 +431,17 @@ mod tests {
     }
 
     #[test]
-    fn generate_bump_code_actions_preserves_caret_prefix() {
+    fn generate_upgrade_code_actions_preserves_caret_prefix() {
         let storer = MockStorer::new(vec!["4.17.19", "4.17.21", "4.18.0", "5.0.0"]);
         let package = make_package("lodash", "^4.17.19", 3, 15, 8);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert_eq!(actions.len(), 3);
-        assert_eq!(actions[0].title, "Bump to latest patch: ^4.17.21");
-        assert_eq!(actions[1].title, "Bump to latest minor: ^4.18.0");
-        assert_eq!(actions[2].title, "Bump to latest major: ^5.0.0");
+        assert_eq!(actions[0].title, "Upgrade to latest patch: ^4.17.21");
+        assert_eq!(actions[1].title, "Upgrade to latest minor: ^4.18.0");
+        assert_eq!(actions[2].title, "Upgrade to latest major: ^5.0.0");
 
         // Verify TextEdit preserves prefix
         let edit = actions[0].edit.as_ref().unwrap();
@@ -451,66 +451,66 @@ mod tests {
     }
 
     #[test]
-    fn generate_bump_code_actions_preserves_tilde_prefix() {
+    fn generate_upgrade_code_actions_preserves_tilde_prefix() {
         let storer = MockStorer::new(vec!["4.17.19", "4.17.21"]);
         let package = make_package("lodash", "~4.17.19", 3, 15, 8);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].title, "Bump to latest patch: ~4.17.21");
+        assert_eq!(actions[0].title, "Upgrade to latest patch: ~4.17.21");
     }
 
     #[test]
-    fn generate_bump_code_actions_preserves_gte_prefix() {
+    fn generate_upgrade_code_actions_preserves_gte_prefix() {
         let storer = MockStorer::new(vec!["4.17.19", "5.0.0"]);
         let package = make_package("lodash", ">=4.17.19", 3, 15, 9);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].title, "Bump to latest major: >=5.0.0");
+        assert_eq!(actions[0].title, "Upgrade to latest major: >=5.0.0");
     }
 
     #[test]
-    fn generate_bump_code_actions_preserves_v_prefix_for_go() {
+    fn generate_upgrade_code_actions_preserves_v_prefix_for_go() {
         let storer = MockStorer::new(vec!["0.14.0", "0.15.0", "1.0.0"]);
         let package = make_package("golang.org/x/text", "v0.14.0", 3, 15, 7);
         let uri = Url::parse("file:///test/go.mod").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert_eq!(actions.len(), 2);
-        assert_eq!(actions[0].title, "Bump to latest minor: v0.15.0");
-        assert_eq!(actions[1].title, "Bump to latest major: v1.0.0");
+        assert_eq!(actions[0].title, "Upgrade to latest minor: v0.15.0");
+        assert_eq!(actions[1].title, "Upgrade to latest major: v1.0.0");
     }
 
     #[test]
-    fn generate_bump_code_actions_shows_next_and_latest_major_when_multiple_behind() {
+    fn generate_upgrade_code_actions_shows_next_and_latest_major_when_multiple_behind() {
         let storer = MockStorer::new(vec!["2.0.0", "3.0.0", "3.5.0", "4.0.0", "4.2.0", "5.0.0"]);
         let package = make_package("lodash", "^2.0.0", 3, 15, 6);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert_eq!(actions.len(), 2);
-        assert_eq!(actions[0].title, "Bump to next major: ^3.5.0");
-        assert_eq!(actions[1].title, "Bump to latest major: ^5.0.0");
+        assert_eq!(actions[0].title, "Upgrade to next major: ^3.5.0");
+        assert_eq!(actions[1].title, "Upgrade to latest major: ^5.0.0");
     }
 
     #[test]
-    fn generate_bump_code_actions_shows_next_and_latest_minor_when_multiple_behind() {
+    fn generate_upgrade_code_actions_shows_next_and_latest_minor_when_multiple_behind() {
         let storer = MockStorer::new(vec!["4.17.0", "4.18.0", "4.18.5", "4.19.0", "4.20.0"]);
         let package = make_package("lodash", "^4.17.0", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_upgrade_code_actions(&storer, &package, &uri);
 
         assert_eq!(actions.len(), 2);
-        assert_eq!(actions[0].title, "Bump to next minor: ^4.18.5");
-        assert_eq!(actions[1].title, "Bump to latest minor: ^4.20.0");
+        assert_eq!(actions[0].title, "Upgrade to next minor: ^4.18.5");
+        assert_eq!(actions[1].title, "Upgrade to latest minor: ^4.20.0");
     }
 
     // ── Upgrade with SHA tests ──
@@ -604,7 +604,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_bump_code_actions_with_sha_pattern1_hash_only() {
+    async fn generate_upgrade_code_actions_with_sha_pattern1_hash_only() {
         let storer = MockStorer::new(vec!["v4.1.5", "v4.1.6"]);
         let sha_fetcher =
             MockTagShaFetcher::new(vec![("v4.1.6", "newsha1234567890newsha1234567890newsha12")]);
@@ -618,10 +618,10 @@ mod tests {
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
 
         let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+            generate_upgrade_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
 
         assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].title, "Bump to latest: v4.1.6");
+        assert_eq!(actions[0].title, "Upgrade to latest: v4.1.6");
 
         let edit = actions[0].edit.as_ref().unwrap();
         let changes = edit.changes.as_ref().unwrap();
@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_bump_code_actions_with_sha_pattern2_hash_with_comment() {
+    async fn generate_upgrade_code_actions_with_sha_pattern2_hash_with_comment() {
         let storer = MockStorer::new(vec!["v4.1.5", "v4.1.6"]);
         let sha_fetcher =
             MockTagShaFetcher::new(vec![("v4.1.6", "newsha1234567890newsha1234567890newsha12")]);
@@ -654,10 +654,10 @@ mod tests {
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
 
         let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+            generate_upgrade_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
 
         assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].title, "Bump to latest patch: v4.1.6");
+        assert_eq!(actions[0].title, "Upgrade to latest patch: v4.1.6");
 
         let edit = actions[0].edit.as_ref().unwrap();
         let changes = edit.changes.as_ref().unwrap();
@@ -674,7 +674,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_bump_code_actions_with_sha_returns_empty_when_sha_fetch_fails() {
+    async fn generate_upgrade_code_actions_with_sha_returns_empty_when_sha_fetch_fails() {
         let storer = MockStorer::new(vec!["v4.1.5", "v4.1.6"]);
         let sha_fetcher = MockTagShaFetcher::failing();
         let package = make_github_actions_package_hash_only(
@@ -687,23 +687,23 @@ mod tests {
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
 
         let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+            generate_upgrade_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
 
         assert!(actions.is_empty());
     }
 
     #[tokio::test]
-    async fn generate_bump_code_actions_with_sha_pattern3_version_tag_only() {
+    async fn generate_upgrade_code_actions_with_sha_pattern3_version_tag_only() {
         let storer = MockStorer::new(vec!["3.0.0", "4.0.0"]);
         let sha_fetcher = MockTagShaFetcher::new(vec![]);
         let package = make_package("actions/checkout", "v3.0.0", 4, 31, 6);
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
 
         let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+            generate_upgrade_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
 
         assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].title, "Bump to latest major: v4.0.0");
+        assert_eq!(actions[0].title, "Upgrade to latest major: v4.0.0");
 
         let edit = actions[0].edit.as_ref().unwrap();
         let changes = edit.changes.as_ref().unwrap();

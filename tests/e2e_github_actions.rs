@@ -626,19 +626,19 @@ jobs:
         })
         .collect();
 
-    // For hash-only, should offer "Bump to latest"
+    // For hash-only, should offer "Upgrade to latest"
     assert!(
         code_actions
             .iter()
-            .any(|ca| ca.title.contains("Bump to latest")),
-        "Expected 'Bump to latest' action, got: {:?}",
+            .any(|ca| ca.title.contains("Upgrade to latest")),
+        "Expected 'Upgrade to latest' action, got: {:?}",
         code_actions.iter().map(|ca| &ca.title).collect::<Vec<_>>()
     );
 
     // Check that the edit contains only the new SHA (no comment)
     let latest_action = code_actions
         .iter()
-        .find(|ca| ca.title.contains("Bump to latest"))
+        .find(|ca| ca.title.contains("Upgrade to latest"))
         .expect("Expected latest action");
 
     let edit = latest_action.edit.as_ref().expect("Expected edit");

@@ -2,7 +2,7 @@
 
 mod upgrade;
 
-pub use upgrade::{generate_bump_code_actions, generate_bump_code_actions_with_sha};
+pub use upgrade::{generate_upgrade_code_actions, generate_upgrade_code_actions_with_sha};
 
 use crate::parser::types::PackageInfo;
 use std::collections::HashMap;
