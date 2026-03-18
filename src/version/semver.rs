@@ -24,8 +24,11 @@ pub enum CompareResult {
 pub fn parse_version(version: &str) -> Option<Version> {
     // Strip version range prefixes and 'v' prefix
     let stripped = version
+        .trim_start_matches("~=")
         .trim_start_matches(">=")
         .trim_start_matches("<=")
+        .trim_start_matches("==")
+        .trim_start_matches("!=")
         .trim_start_matches('>')
         .trim_start_matches('<')
         .trim_start_matches('=')
@@ -133,6 +136,9 @@ mod tests {
     #[case("<1.2.3", Some(Version::new(1, 2, 3)))] // lt prefix
     #[case("=1.2.3", Some(Version::new(1, 2, 3)))] // eq prefix
     #[case("v1.2.3", Some(Version::new(1, 2, 3)))] // v prefix
+    #[case("~=1.2.3", Some(Version::new(1, 2, 3)))] // PyPI compatible release
+    #[case("==1.2.3", Some(Version::new(1, 2, 3)))] // PyPI exact pin
+    #[case("!=1.2.3", Some(Version::new(1, 2, 3)))] // PyPI not-equal
     #[case("1.2", Some(Version::new(1, 2, 0)))] // partial version
     #[case("1", Some(Version::new(1, 0, 0)))] // single number
     #[case("invalid", None)] // invalid version
