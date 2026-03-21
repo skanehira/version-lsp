@@ -1,6 +1,7 @@
 //! Registry-specific version matchers
 
 pub mod crates;
+pub mod docker;
 pub mod github_actions;
 pub mod go;
 pub mod jsr;
@@ -9,6 +10,7 @@ pub mod pnpm;
 pub mod pypi;
 
 pub use crates::CratesVersionMatcher;
+pub use docker::DockerVersionMatcher;
 pub use github_actions::GitHubActionsMatcher;
 pub use go::GoVersionMatcher;
 pub use jsr::JsrVersionMatcher;

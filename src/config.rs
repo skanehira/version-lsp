@@ -63,6 +63,7 @@ pub struct RegistriesConfig {
     pub pnpm_catalog: RegistryConfig,
     pub jsr: RegistryConfig,
     pub pypi: RegistryConfig,
+    pub docker: RegistryConfig,
 }
 
 /// Individual registry configuration
@@ -155,6 +156,7 @@ mod tests {
                     pnpm_catalog: RegistryConfig { enabled: false },
                     jsr: RegistryConfig { enabled: false },
                     pypi: RegistryConfig { enabled: true },
+                    docker: RegistryConfig { enabled: true },
                 },
                 ignore_prerelease: true,
             }

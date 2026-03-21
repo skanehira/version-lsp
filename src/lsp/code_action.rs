@@ -2,10 +2,8 @@
 
 use crate::parser::types::{ExtraInfo, PackageInfo};
 use crate::version::checker::VersionStorer;
+use crate::version::matcher::VersionMatcher;
 use crate::version::registries::github::TagShaFetcher;
-use crate::version::semver::{
-    calculate_latest_major, calculate_latest_minor, calculate_latest_patch,
-};
 use std::collections::HashMap;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, Position, Range, TextEdit, Url, WorkspaceEdit,
@@ -76,6 +74,7 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
     storer: &S,
     package: &PackageInfo,
     uri: &Url,
+    matcher: &dyn VersionMatcher,
 ) -> Vec<CodeAction> {
     let Ok(versions) = storer.get_versions(package.registry_type, &package.name) else {
         return vec![];
@@ -88,10 +87,9 @@ pub fn generate_bump_code_actions<S: VersionStorer>(
     let current = &package.version;
     let prefix = extract_version_prefix(current);
 
-    // Calculate bump targets
-    let patch = calculate_latest_patch(current, &versions);
-    let minor = calculate_latest_minor(current, &versions);
-    let major = calculate_latest_major(current, &versions);
+    // Calculate bump targets via matcher (registry-specific logic)
+    let targets = matcher.calculate_bump_targets(current, &versions);
+    let (patch, minor, major) = (targets.patch, targets.minor, targets.major);
 
     // Collect unique bump targets with their labels
     let mut seen = std::collections::HashSet::new();
@@ -160,6 +158,7 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
     package: &PackageInfo,
     uri: &Url,
     sha_fetcher: &F,
+    matcher: &dyn VersionMatcher,
 ) -> Vec<CodeAction> {
     let Ok(versions) = storer.get_versions(package.registry_type, &package.name) else {
         return vec![];
@@ -181,10 +180,9 @@ pub async fn generate_bump_code_actions_with_sha<S: VersionStorer, F: TagShaFetc
     let current = &package.version;
     let prefix = extract_version_prefix(current);
 
-    // Calculate bump targets
-    let patch = calculate_latest_patch(current, &versions);
-    let minor = calculate_latest_minor(current, &versions);
-    let major = calculate_latest_major(current, &versions);
+    // Calculate bump targets via matcher (registry-specific logic)
+    let targets = matcher.calculate_bump_targets(current, &versions);
+    let (patch, minor, major) = (targets.patch, targets.minor, targets.major);
 
     // Collect unique bump targets with their labels
     let mut seen = std::collections::HashSet::new();
@@ -328,6 +326,7 @@ mod tests {
     use crate::parser::types::RegistryType;
     use crate::version::cache::PackageId;
     use crate::version::error::CacheError;
+    use crate::version::matchers::{GitHubActionsMatcher, NpmVersionMatcher};
     use rstest::rstest;
 
     fn make_package(name: &str, version: &str, line: u32, column: u32, len: usize) -> PackageInfo {
@@ -492,7 +491,7 @@ mod tests {
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_bump_code_actions(&storer, &package, &uri, &NpmVersionMatcher);
 
         assert_eq!(actions.len(), 3);
         assert_eq!(actions[0].title, "Bump to latest patch: 4.17.21");
@@ -506,7 +505,7 @@ mod tests {
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_bump_code_actions(&storer, &package, &uri, &NpmVersionMatcher);
 
         assert!(actions.is_empty());
     }
@@ -517,7 +516,7 @@ mod tests {
         let package = make_package("lodash", "5.0.0", 3, 15, 5);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_bump_code_actions(&storer, &package, &uri, &NpmVersionMatcher);
 
         assert!(actions.is_empty());
     }
@@ -528,7 +527,7 @@ mod tests {
         let package = make_package("lodash", "4.17.19", 3, 15, 7);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_bump_code_actions(&storer, &package, &uri, &NpmVersionMatcher);
 
         assert_eq!(actions.len(), 1);
         let edit = actions[0].edit.as_ref().unwrap();
@@ -557,7 +556,7 @@ mod tests {
         let package = make_package("lodash", "^4.17.19", 3, 15, 8);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_bump_code_actions(&storer, &package, &uri, &NpmVersionMatcher);
 
         assert_eq!(actions.len(), 3);
         assert_eq!(actions[0].title, "Bump to latest patch: ^4.17.21");
@@ -577,7 +576,7 @@ mod tests {
         let package = make_package("lodash", "~4.17.19", 3, 15, 8);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_bump_code_actions(&storer, &package, &uri, &NpmVersionMatcher);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Bump to latest patch: ~4.17.21");
@@ -589,7 +588,7 @@ mod tests {
         let package = make_package("lodash", ">=4.17.19", 3, 15, 9);
         let uri = Url::parse("file:///test/package.json").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_bump_code_actions(&storer, &package, &uri, &NpmVersionMatcher);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Bump to latest major: >=5.0.0");
@@ -601,7 +600,7 @@ mod tests {
         let package = make_package("golang.org/x/text", "v0.14.0", 3, 15, 7);
         let uri = Url::parse("file:///test/go.mod").unwrap();
 
-        let actions = generate_bump_code_actions(&storer, &package, &uri);
+        let actions = generate_bump_code_actions(&storer, &package, &uri, &NpmVersionMatcher);
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].title, "Bump to latest minor: v0.15.0");
@@ -717,8 +716,14 @@ mod tests {
         );
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
 
-        let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+        let actions = generate_bump_code_actions_with_sha(
+            &storer,
+            &package,
+            &uri,
+            &sha_fetcher,
+            &GitHubActionsMatcher,
+        )
+        .await;
 
         assert_eq!(actions.len(), 1);
         // For hash-only packages, we don't know the current version, so just offer "Bump to latest"
@@ -759,8 +764,14 @@ mod tests {
         );
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
 
-        let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+        let actions = generate_bump_code_actions_with_sha(
+            &storer,
+            &package,
+            &uri,
+            &sha_fetcher,
+            &GitHubActionsMatcher,
+        )
+        .await;
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Bump to latest patch: v4.1.6");
@@ -794,8 +805,14 @@ mod tests {
         );
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
 
-        let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+        let actions = generate_bump_code_actions_with_sha(
+            &storer,
+            &package,
+            &uri,
+            &sha_fetcher,
+            &GitHubActionsMatcher,
+        )
+        .await;
 
         assert!(actions.is_empty());
     }
@@ -808,8 +825,14 @@ mod tests {
         let package = make_package("actions/checkout", "v3.0.0", 4, 31, 6);
         let uri = Url::parse("file:///test/.github/workflows/ci.yml").unwrap();
 
-        let actions =
-            generate_bump_code_actions_with_sha(&storer, &package, &uri, &sha_fetcher).await;
+        let actions = generate_bump_code_actions_with_sha(
+            &storer,
+            &package,
+            &uri,
+            &sha_fetcher,
+            &GitHubActionsMatcher,
+        )
+        .await;
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Bump to latest major: v4.0.0");
