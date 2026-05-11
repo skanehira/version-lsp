@@ -20,8 +20,8 @@ use version_lsp::version::cache::Cache;
 use version_lsp::version::checker::VersionStorer;
 use version_lsp::version::error::RegistryError;
 use version_lsp::version::locks::{
-    CargoLockResolver, NpmLockResolver, PdmLockResolver, PipfileLockResolver, PnpmLockResolver,
-    PoetryLockResolver, UvLockResolver, YarnLockResolver,
+    CargoLockResolver, DenoLockResolver, NpmLockResolver, PdmLockResolver, PipfileLockResolver,
+    PnpmLockResolver, PoetryLockResolver, UvLockResolver, YarnLockResolver,
 };
 use version_lsp::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
@@ -110,7 +110,8 @@ pub fn create_test_resolver(
             Arc::new(DenoJsonParser::new()),
             Arc::new(JsrVersionMatcher),
             Arc::new(mock_registry),
-        ),
+        )
+        .with_lock_resolver(Arc::new(DenoLockResolver)),
         RegistryType::PyPI => PackageResolver::new(
             Arc::new(PyprojectTomlParser::new()),
             Arc::new(PypiVersionMatcher),

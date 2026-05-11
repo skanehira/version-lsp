@@ -131,6 +131,7 @@ src/
     ├── locks/              # Lock-File Resolver Implementations
     │   ├── mod.rs
     │   ├── cargo.rs        # CargoLockResolver (Cargo.lock)
+    │   ├── deno.rs         # DenoLockResolver (deno.lock, JSR specifiers)
     │   ├── npm.rs          # NpmLockResolver (package-lock.json)
     │   ├── pdm.rs          # PdmLockResolver (pdm.lock)
     │   ├── pipfile.rs      # PipfileLockResolver (Pipfile.lock)
@@ -415,11 +416,13 @@ through.
 | PoetryLockResolver | `poetry.lock` | TOML, same `[[package]]` scanner as Cargo |
 | PdmLockResolver | `pdm.lock` | TOML, same `[[package]]` scanner as Cargo |
 | PipfileLockResolver | `Pipfile.lock` | JSON, walks `default` then `develop`; strips the stored `==` prefix |
+| DenoLockResolver | `deno.lock` (v3/v4) | scans `specifiers` for `jsr:<name>@…`, strips peer-dep suffix |
 
 For `RegistryType::Npm`, resolvers are registered in priority order
 **pnpm > yarn > npm**. For `RegistryType::PyPI`,
-**uv > poetry > pdm > pipfile**. `RegistryType::PnpmCatalog` only
-registers PnpmLockResolver.
+**uv > poetry > pdm > pipfile**. `RegistryType::Jsr` only registers
+DenoLockResolver. `RegistryType::PnpmCatalog` only registers
+PnpmLockResolver.
 
 **Resolver priority** (registered in `create_default_resolvers`,
 `src/lsp/resolver.rs`): when multiple resolvers are configured for the

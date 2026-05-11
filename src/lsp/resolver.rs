@@ -18,8 +18,8 @@ use crate::parser::traits::Parser;
 use crate::parser::types::RegistryType;
 use crate::version::lock::LockResolver;
 use crate::version::locks::{
-    CargoLockResolver, NpmLockResolver, PdmLockResolver, PipfileLockResolver, PnpmLockResolver,
-    PoetryLockResolver, UvLockResolver, YarnLockResolver,
+    CargoLockResolver, DenoLockResolver, NpmLockResolver, PdmLockResolver, PipfileLockResolver,
+    PnpmLockResolver, PoetryLockResolver, UvLockResolver, YarnLockResolver,
 };
 use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
@@ -153,7 +153,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(DenoJsonParser::new()),
             Arc::new(JsrVersionMatcher),
             Arc::new(JsrRegistry::default()),
-        ),
+        )
+        .with_lock_resolver(Arc::new(DenoLockResolver)),
     );
 
     resolvers.insert(

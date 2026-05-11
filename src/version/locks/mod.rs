@@ -4,6 +4,7 @@
 //! for registration and priority ordering.
 
 pub mod cargo;
+pub mod deno;
 pub mod npm;
 pub mod pdm;
 pub mod pipfile;
@@ -13,6 +14,7 @@ pub mod uv;
 pub mod yarn;
 
 pub use cargo::CargoLockResolver;
+pub use deno::DenoLockResolver;
 pub use npm::NpmLockResolver;
 pub use pdm::PdmLockResolver;
 pub use pipfile::PipfileLockResolver;

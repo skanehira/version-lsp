@@ -829,3 +829,58 @@ dependencies = [
         .unwrap();
     assert_eq!(edits[0].new_text, "==3.0.0");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn jsr_offers_pin_to_locked_version_from_deno_lock() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"{
+  "imports": {
+    "@luca/flag": "jsr:@luca/flag@^1.0.0"
+  }
+}"#;
+    let deno_lock = r#"{
+  "version": "4",
+  "specifiers": {
+    "jsr:@luca/flag@^1.0.0": "1.0.1"
+  },
+  "jsr": {
+    "@luca/flag@1.0.1": { "integrity": "sha512-fake" }
+  }
+}
+"#;
+    let uri = write_workspace(&tmp, "deno.json", manifest, "deno.lock", deno_lock);
+
+    let (_cache_dir, cache) =
+        create_test_cache(RegistryType::Jsr, &[("@luca/flag", vec!["1.0.0", "1.0.1"])]);
+    let registry =
+        MockRegistry::new(RegistryType::Jsr).with_versions("@luca/flag", vec!["1.0.0", "1.0.1"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::Jsr,
+        create_test_resolver(RegistryType::Jsr, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    // Cursor on the version part of "jsr:@luca/flag@^1.0.0".
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 2, 35).await;
+    assert!(
+        titles.iter().any(|t| t == "Pin to locked version: 1.0.1"),
+        "expected deno-lock resolved 1.0.1, got: {titles:?}"
+    );
+}

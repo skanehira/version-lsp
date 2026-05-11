@@ -30,6 +30,7 @@ A Language Server Protocol (LSP) implementation that provides version checking d
   - `Cargo.lock`
   - `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` (v1 + Berry)
   - `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`
+  - `deno.lock`
 
   When multiple lock files coexist (e.g. `pnpm-lock.yaml` alongside
   `package-lock.json`, or `uv.lock` alongside `poetry.lock`), the more
