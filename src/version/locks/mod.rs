@@ -6,9 +6,11 @@
 pub mod cargo;
 pub mod npm;
 pub mod pnpm;
+pub mod uv;
 pub mod yarn;
 
 pub use cargo::CargoLockResolver;
 pub use npm::NpmLockResolver;
 pub use pnpm::PnpmLockResolver;
+pub use uv::UvLockResolver;
 pub use yarn::YarnLockResolver;

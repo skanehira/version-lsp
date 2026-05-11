@@ -133,6 +133,7 @@ src/
     │   ├── cargo.rs        # CargoLockResolver (Cargo.lock)
     │   ├── npm.rs          # NpmLockResolver (package-lock.json)
     │   ├── pnpm.rs         # PnpmLockResolver (pnpm-lock.yaml)
+    │   ├── uv.rs           # UvLockResolver (uv.lock)
     │   └── yarn.rs         # YarnLockResolver (yarn.lock v1 + Berry)
     │
     └── matchers/           # Version Matcher Implementations
@@ -407,6 +408,7 @@ through.
 | NpmLockResolver | `package-lock.json` | JSON, walks `packages` then legacy `dependencies` |
 | PnpmLockResolver | `pnpm-lock.yaml` | YAML, also resolves pnpm catalog references |
 | YarnLockResolver | `yarn.lock` (v1 + Berry) | both quoted-block and YAML-ish dialects, multi-spec keys, Berry `_peer@x` suffix stripped |
+| UvLockResolver | `uv.lock` | TOML, same `[[package]]` scanner as Cargo |
 
 For `RegistryType::Npm`, resolvers are registered in priority order
 **pnpm > yarn > npm**. `RegistryType::PnpmCatalog` only registers

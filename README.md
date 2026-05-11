@@ -29,6 +29,7 @@ A Language Server Protocol (LSP) implementation that provides version checking d
   recorded in the workspace lock file. Supported formats:
   - `Cargo.lock`
   - `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` (v1 + Berry)
+  - `uv.lock`
 
   When multiple npm-family lock files coexist, the more specific tool
   wins (pnpm > yarn > npm).

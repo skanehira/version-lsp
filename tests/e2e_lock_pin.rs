@@ -550,3 +550,84 @@ async fn npm_offers_pin_to_locked_version_from_yarn_berry_lock() {
         "expected yarn berry resolved 18.2.0, got: {titles:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pypi_offers_pin_to_locked_version_from_uv_lock() {
+    let tmp = TempDir::new().unwrap();
+    let manifest_path = tmp.path().join("pyproject.toml");
+    let manifest = r#"[project]
+name = "myapp"
+version = "0.1.0"
+dependencies = [
+    "requests>=2.20",
+]
+"#;
+    fs::write(&manifest_path, manifest).unwrap();
+
+    let uv_lock = r#"version = 1
+requires-python = ">=3.10"
+
+[[package]]
+name = "myapp"
+version = "0.1.0"
+
+[[package]]
+name = "requests"
+version = "2.31.0"
+source = { registry = "https://pypi.org/simple" }
+"#;
+    fs::write(tmp.path().join("uv.lock"), uv_lock).unwrap();
+    let uri = Url::from_file_path(&manifest_path).unwrap();
+
+    let (_cache_dir, cache) = create_test_cache(
+        RegistryType::PyPI,
+        &[("requests", vec!["2.20.0", "2.31.0", "2.32.0"])],
+    );
+    let registry = MockRegistry::new(RegistryType::PyPI)
+        .with_versions("requests", vec!["2.20.0", "2.31.0", "2.32.0"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::PyPI,
+        create_test_resolver(RegistryType::PyPI, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    // Line 4 = `    "requests>=2.20",` — cursor on the version spec.
+    let actions = collect_code_actions(&mut service, uri.as_str(), 4, 18).await;
+
+    let pin_action = actions
+        .iter()
+        .find(|ca| ca.title == "Pin to locked version: 2.31.0")
+        .expect("expected uv-resolved version 2.31.0 pin action");
+
+    let edits = pin_action
+        .edit
+        .as_ref()
+        .unwrap()
+        .changes
+        .as_ref()
+        .unwrap()
+        .get(&uri)
+        .unwrap();
+    assert_eq!(
+        edits[0].new_text, "==2.31.0",
+        "PyPI pin must include the == operator so the dependency string stays valid"
+    );
+}
