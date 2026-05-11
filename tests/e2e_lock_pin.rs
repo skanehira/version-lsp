@@ -314,3 +314,134 @@ async fn npm_omits_pin_action_when_no_lock_file_present() {
         "did not expect lock-pin action without a lock file, got: {titles:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn npm_prefers_pnpm_lock_over_npm_lock_when_both_present() {
+    let tmp = TempDir::new().unwrap();
+    let manifest_path = tmp.path().join("package.json");
+    let manifest = r#"{
+  "name": "test-project",
+  "dependencies": {
+    "lodash": "^4.17.0"
+  }
+}"#;
+    fs::write(&manifest_path, manifest).unwrap();
+
+    let pnpm_lock = r#"lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      lodash:
+        specifier: ^4.17.0
+        version: 4.17.21
+"#;
+    fs::write(tmp.path().join("pnpm-lock.yaml"), pnpm_lock).unwrap();
+
+    // Different version in package-lock.json — pnpm wins because it's registered first.
+    let npm_lock = r#"{
+  "name": "test-project",
+  "lockfileVersion": 3,
+  "packages": {
+    "node_modules/lodash": { "version": "4.17.20" }
+  }
+}"#;
+    fs::write(tmp.path().join("package-lock.json"), npm_lock).unwrap();
+    let uri = Url::from_file_path(&manifest_path).unwrap();
+
+    let (_cache_dir, cache) =
+        create_test_cache(RegistryType::Npm, &[("lodash", vec!["4.17.20", "4.17.21"])]);
+    let registry =
+        MockRegistry::new(RegistryType::Npm).with_versions("lodash", vec!["4.17.20", "4.17.21"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::Npm,
+        create_test_resolver(RegistryType::Npm, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 3, 17).await;
+
+    assert!(
+        titles.contains(&"Pin to locked version: 4.17.21".to_string()),
+        "expected pnpm-resolved version 4.17.21, got: {titles:?}"
+    );
+    assert!(
+        !titles.contains(&"Pin to locked version: 4.17.20".to_string()),
+        "did not expect npm-lock fallback when pnpm-lock present, got: {titles:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn npm_strips_pnpm_peer_suffix_in_pin_action() {
+    let tmp = TempDir::new().unwrap();
+    let manifest_path = tmp.path().join("package.json");
+    let manifest = r#"{
+  "name": "test-project",
+  "dependencies": {
+    "react-dom": "^18.0.0"
+  }
+}"#;
+    fs::write(&manifest_path, manifest).unwrap();
+
+    let pnpm_lock = r#"lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      react-dom:
+        specifier: ^18.0.0
+        version: 18.2.0(react@18.2.0)
+"#;
+    fs::write(tmp.path().join("pnpm-lock.yaml"), pnpm_lock).unwrap();
+    let uri = Url::from_file_path(&manifest_path).unwrap();
+
+    let (_cache_dir, cache) =
+        create_test_cache(RegistryType::Npm, &[("react-dom", vec!["18.2.0"])]);
+    let registry = MockRegistry::new(RegistryType::Npm).with_versions("react-dom", vec!["18.2.0"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::Npm,
+        create_test_resolver(RegistryType::Npm, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 3, 19).await;
+
+    assert!(
+        titles.contains(&"Pin to locked version: 18.2.0".to_string()),
+        "expected peer-stripped 18.2.0, got: {titles:?}"
+    );
+}

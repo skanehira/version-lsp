@@ -5,6 +5,8 @@
 
 pub mod cargo;
 pub mod npm;
+pub mod pnpm;
 
 pub use cargo::CargoLockResolver;
 pub use npm::NpmLockResolver;
+pub use pnpm::PnpmLockResolver;
