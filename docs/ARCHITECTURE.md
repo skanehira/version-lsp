@@ -129,7 +129,8 @@ src/
     │   └── docker.rs       # Docker Hub / ghcr.io API client
     │
     ├── locks/              # Lock-File Resolver Implementations
-    │   └── mod.rs          # (concrete resolvers added per registry family)
+    │   ├── mod.rs
+    │   └── cargo.rs        # CargoLockResolver (Cargo.lock)
     │
     └── matchers/           # Version Matcher Implementations
         ├── mod.rs
@@ -395,12 +396,11 @@ Returning `Ok(None)` means "lock file absent or package not listed" and
 falls through to the next resolver; `Err(_)` is logged and also falls
 through.
 
-**Implementations** (resolvers added per registry family in follow-up
-commits):
+**Implementations** (added per registry family):
 
 | Resolver | Lock File | Notes |
 |----------|-----------|-------|
-| _(none registered yet)_ | | |
+| CargoLockResolver | `Cargo.lock` (TOML) | shares the `[[package]]` scanner with other TOML-formatted lock files |
 
 **Resolver priority** (registered in `create_default_resolvers`,
 `src/lsp/resolver.rs`): when multiple resolvers are configured for the

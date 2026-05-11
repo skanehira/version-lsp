@@ -25,6 +25,9 @@ A Language Server Protocol (LSP) implementation that provides version checking d
 - Reports errors for non-existent versions
 - Supports version ranges (e.g., `^1.0.0`, `~1.0.0`, `>=1.0.0`)
 - Caches version information locally for fast response
+- Code action **Pin to locked version**: pins a dependency to the version
+  recorded in the workspace lock file. Supported formats:
+  - `Cargo.lock`
 
 ## Supported Files
 

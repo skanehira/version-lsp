@@ -19,6 +19,7 @@ use version_lsp::parser::types::RegistryType;
 use version_lsp::version::cache::Cache;
 use version_lsp::version::checker::VersionStorer;
 use version_lsp::version::error::RegistryError;
+use version_lsp::version::locks::CargoLockResolver;
 use version_lsp::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
     JsrVersionMatcher, NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
@@ -86,7 +87,8 @@ pub fn create_test_resolver(
             Arc::new(CargoTomlParser::new()),
             Arc::new(CratesVersionMatcher),
             Arc::new(mock_registry),
-        ),
+        )
+        .with_lock_resolver(Arc::new(CargoLockResolver)),
         RegistryType::GoProxy => PackageResolver::new(
             Arc::new(GoModParser::new()),
             Arc::new(GoVersionMatcher),
