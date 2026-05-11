@@ -20,7 +20,8 @@ use version_lsp::version::cache::Cache;
 use version_lsp::version::checker::VersionStorer;
 use version_lsp::version::error::RegistryError;
 use version_lsp::version::locks::{
-    CargoLockResolver, NpmLockResolver, PnpmLockResolver, UvLockResolver, YarnLockResolver,
+    CargoLockResolver, NpmLockResolver, PnpmLockResolver, PoetryLockResolver, UvLockResolver,
+    YarnLockResolver,
 };
 use version_lsp::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
@@ -115,7 +116,8 @@ pub fn create_test_resolver(
             Arc::new(PypiVersionMatcher),
             Arc::new(mock_registry),
         )
-        .with_lock_resolver(Arc::new(UvLockResolver)),
+        .with_lock_resolver(Arc::new(UvLockResolver))
+        .with_lock_resolver(Arc::new(PoetryLockResolver)),
         RegistryType::Docker => PackageResolver::new(
             Arc::new(ComposeParser::new()),
             Arc::new(DockerVersionMatcher),

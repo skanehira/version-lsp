@@ -631,3 +631,125 @@ source = { registry = "https://pypi.org/simple" }
         "PyPI pin must include the == operator so the dependency string stays valid"
     );
 }
+
+async fn boot_pypi_service(
+    cache: std::sync::Arc<version_lsp::version::cache::Cache>,
+    versions: Vec<&str>,
+    package: &str,
+    uri: &Url,
+    manifest: &str,
+) -> LspService<Backend<version_lsp::version::cache::Cache>> {
+    let registry = MockRegistry::new(RegistryType::PyPI).with_versions(package, versions.clone());
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::PyPI,
+        create_test_resolver(RegistryType::PyPI, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    service
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pypi_offers_pin_to_locked_version_from_poetry_lock() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"[project]
+name = "myapp"
+version = "0.1.0"
+dependencies = [
+    "requests>=2.20",
+]
+"#;
+    let poetry_lock = r#"[[package]]
+name = "requests"
+version = "2.30.0"
+"#;
+    let uri = write_workspace(&tmp, "pyproject.toml", manifest, "poetry.lock", poetry_lock);
+
+    let (_cache_dir, cache) = create_test_cache(
+        RegistryType::PyPI,
+        &[("requests", vec!["2.20.0", "2.30.0"])],
+    );
+    let mut service =
+        boot_pypi_service(cache, vec!["2.20.0", "2.30.0"], "requests", &uri, manifest).await;
+
+    let actions = collect_code_actions(&mut service, uri.as_str(), 4, 18).await;
+    let pin_action = actions
+        .iter()
+        .find(|ca| ca.title == "Pin to locked version: 2.30.0")
+        .expect("expected poetry-resolved 2.30.0 pin action");
+    let edits = pin_action
+        .edit
+        .as_ref()
+        .unwrap()
+        .changes
+        .as_ref()
+        .unwrap()
+        .get(&uri)
+        .unwrap();
+    assert_eq!(edits[0].new_text, "==2.30.0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pypi_uv_takes_precedence_over_poetry_lock() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"[project]
+name = "myapp"
+version = "0.1.0"
+dependencies = [
+    "requests>=2.20",
+]
+"#;
+    let manifest_path = tmp.path().join("pyproject.toml");
+    fs::write(&manifest_path, manifest).unwrap();
+    fs::write(
+        tmp.path().join("uv.lock"),
+        "[[package]]\nname = \"requests\"\nversion = \"2.31.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("poetry.lock"),
+        "[[package]]\nname = \"requests\"\nversion = \"2.30.0\"\n",
+    )
+    .unwrap();
+    let uri = Url::from_file_path(&manifest_path).unwrap();
+
+    let (_cache_dir, cache) = create_test_cache(
+        RegistryType::PyPI,
+        &[("requests", vec!["2.20.0", "2.30.0", "2.31.0"])],
+    );
+    let mut service = boot_pypi_service(
+        cache,
+        vec!["2.20.0", "2.30.0", "2.31.0"],
+        "requests",
+        &uri,
+        manifest,
+    )
+    .await;
+
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 4, 18).await;
+    assert!(
+        titles.contains(&"Pin to locked version: 2.31.0".to_string()),
+        "uv must win over poetry, got: {titles:?}"
+    );
+    assert!(
+        !titles.contains(&"Pin to locked version: 2.30.0".to_string()),
+        "poetry result must not surface when uv exists, got: {titles:?}"
+    );
+}
