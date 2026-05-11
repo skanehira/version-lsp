@@ -132,7 +132,8 @@ src/
     │   ├── mod.rs
     │   ├── cargo.rs        # CargoLockResolver (Cargo.lock)
     │   ├── npm.rs          # NpmLockResolver (package-lock.json)
-    │   └── pnpm.rs         # PnpmLockResolver (pnpm-lock.yaml)
+    │   ├── pnpm.rs         # PnpmLockResolver (pnpm-lock.yaml)
+    │   └── yarn.rs         # YarnLockResolver (yarn.lock v1 + Berry)
     │
     └── matchers/           # Version Matcher Implementations
         ├── mod.rs
@@ -405,10 +406,11 @@ through.
 | CargoLockResolver | `Cargo.lock` (TOML) | shares the `[[package]]` scanner with other TOML-formatted lock files |
 | NpmLockResolver | `package-lock.json` | JSON, walks `packages` then legacy `dependencies` |
 | PnpmLockResolver | `pnpm-lock.yaml` | YAML, also resolves pnpm catalog references |
+| YarnLockResolver | `yarn.lock` (v1 + Berry) | both quoted-block and YAML-ish dialects, multi-spec keys, Berry `_peer@x` suffix stripped |
 
-For `RegistryType::Npm`, PnpmLockResolver is registered ahead of
-NpmLockResolver so a workspace with both lock files pins against pnpm.
-`RegistryType::PnpmCatalog` only registers PnpmLockResolver.
+For `RegistryType::Npm`, resolvers are registered in priority order
+**pnpm > yarn > npm**. `RegistryType::PnpmCatalog` only registers
+PnpmLockResolver.
 
 **Resolver priority** (registered in `create_default_resolvers`,
 `src/lsp/resolver.rs`): when multiple resolvers are configured for the

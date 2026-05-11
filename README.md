@@ -28,9 +28,10 @@ A Language Server Protocol (LSP) implementation that provides version checking d
 - Code action **Pin to locked version**: pins a dependency to the version
   recorded in the workspace lock file. Supported formats:
   - `Cargo.lock`
-  - `package-lock.json`, `pnpm-lock.yaml`
+  - `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` (v1 + Berry)
 
-  When both `pnpm-lock.yaml` and `package-lock.json` exist, pnpm wins.
+  When multiple npm-family lock files coexist, the more specific tool
+  wins (pnpm > yarn > npm).
 
 ## Supported Files
 

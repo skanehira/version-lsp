@@ -445,3 +445,108 @@ importers:
         "expected peer-stripped 18.2.0, got: {titles:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn npm_offers_pin_to_locked_version_from_yarn_v1_lock() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"{
+  "name": "test-project",
+  "dependencies": {
+    "lodash": "^4.17.0"
+  }
+}"#;
+    let yarn_lock = r#"# yarn lockfile v1
+
+
+lodash@^4.17.0:
+  version "4.17.21"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz"
+"#;
+    let uri = write_workspace(&tmp, "package.json", manifest, "yarn.lock", yarn_lock);
+
+    let (_cache_dir, cache) =
+        create_test_cache(RegistryType::Npm, &[("lodash", vec!["4.17.0", "4.17.21"])]);
+    let registry =
+        MockRegistry::new(RegistryType::Npm).with_versions("lodash", vec!["4.17.0", "4.17.21"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::Npm,
+        create_test_resolver(RegistryType::Npm, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 3, 17).await;
+    assert!(
+        titles.contains(&"Pin to locked version: 4.17.21".to_string()),
+        "expected yarn v1 resolved 4.17.21, got: {titles:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn npm_offers_pin_to_locked_version_from_yarn_berry_lock() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"{
+  "name": "test-project",
+  "dependencies": {
+    "react": "^18.0.0"
+  }
+}"#;
+    let yarn_lock = r#"__metadata:
+  version: 6
+  cacheKey: 8
+
+"react@npm:^18.0.0":
+  version: 18.2.0
+  resolution: "react@npm:18.2.0"
+"#;
+    let uri = write_workspace(&tmp, "package.json", manifest, "yarn.lock", yarn_lock);
+
+    let (_cache_dir, cache) =
+        create_test_cache(RegistryType::Npm, &[("react", vec!["18.0.0", "18.2.0"])]);
+    let registry =
+        MockRegistry::new(RegistryType::Npm).with_versions("react", vec!["18.0.0", "18.2.0"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::Npm,
+        create_test_resolver(RegistryType::Npm, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 3, 16).await;
+    assert!(
+        titles.contains(&"Pin to locked version: 18.2.0".to_string()),
+        "expected yarn berry resolved 18.2.0, got: {titles:?}"
+    );
+}
