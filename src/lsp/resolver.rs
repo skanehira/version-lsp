@@ -17,7 +17,7 @@ use crate::parser::pyproject_toml::PyprojectTomlParser;
 use crate::parser::traits::Parser;
 use crate::parser::types::RegistryType;
 use crate::version::lock::LockResolver;
-use crate::version::locks::CargoLockResolver;
+use crate::version::locks::{CargoLockResolver, NpmLockResolver};
 use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
@@ -109,7 +109,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(PackageJsonParser::new()),
             Arc::new(NpmVersionMatcher),
             Arc::new(npm_restistry.clone()),
-        ),
+        )
+        .with_lock_resolver(Arc::new(NpmLockResolver)),
     );
 
     resolvers.insert(

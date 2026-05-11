@@ -4,5 +4,7 @@
 //! for registration and priority ordering.
 
 pub mod cargo;
+pub mod npm;
 
 pub use cargo::CargoLockResolver;
+pub use npm::NpmLockResolver;

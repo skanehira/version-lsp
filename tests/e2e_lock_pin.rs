@@ -19,6 +19,20 @@ use version_lsp::lsp::backend::Backend;
 use version_lsp::lsp::resolver::PackageResolver;
 use version_lsp::parser::types::RegistryType;
 
+/// Write a manifest and the matching lock file into a temp dir, returning the manifest URI.
+fn write_workspace(
+    tmp: &TempDir,
+    manifest_name: &str,
+    manifest: &str,
+    lock_name: &str,
+    lock: &str,
+) -> Url {
+    let manifest_path = tmp.path().join(manifest_name);
+    fs::write(&manifest_path, manifest).unwrap();
+    fs::write(tmp.path().join(lock_name), lock).unwrap();
+    Url::from_file_path(&manifest_path).unwrap()
+}
+
 async fn collect_code_actions(
     service: &mut LspService<Backend<version_lsp::version::cache::Cache>>,
     uri: &str,
@@ -123,5 +137,180 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     assert!(
         titles.contains(&"Pin to locked version: 1.0.219".to_string()),
         "expected lock-pin action, got: {titles:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn npm_offers_pin_to_locked_version_when_lock_resolves() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"{
+  "name": "test-project",
+  "dependencies": {
+    "lodash": "^4.17.0"
+  }
+}"#;
+    let lockfile = r#"{
+  "name": "test-project",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "test-project", "version": "1.0.0" },
+    "node_modules/lodash": { "version": "4.17.21" }
+  }
+}"#;
+    let uri = write_workspace(
+        &tmp,
+        "package.json",
+        manifest,
+        "package-lock.json",
+        lockfile,
+    );
+
+    let (_cache_dir, cache) = create_test_cache(
+        RegistryType::Npm,
+        &[("lodash", vec!["4.17.19", "4.17.20", "4.17.21"])],
+    );
+    let registry = MockRegistry::new(RegistryType::Npm)
+        .with_versions("lodash", vec!["4.17.19", "4.17.20", "4.17.21"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::Npm,
+        create_test_resolver(RegistryType::Npm, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    // Cursor on the version "^4.17.0" — column points into the version string.
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 3, 17).await;
+
+    assert!(
+        titles.contains(&"Pin to locked version: 4.17.21".to_string()),
+        "expected lock-pin action, got: {titles:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn npm_omits_pin_action_when_locked_matches_current_text() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"{
+  "name": "test-project",
+  "dependencies": {
+    "lodash": "4.17.21"
+  }
+}"#;
+    let lockfile = r#"{
+  "name": "test-project",
+  "lockfileVersion": 3,
+  "packages": {
+    "node_modules/lodash": { "version": "4.17.21" }
+  }
+}"#;
+    let uri = write_workspace(
+        &tmp,
+        "package.json",
+        manifest,
+        "package-lock.json",
+        lockfile,
+    );
+
+    let (_cache_dir, cache) = create_test_cache(RegistryType::Npm, &[("lodash", vec!["4.17.21"])]);
+    let registry = MockRegistry::new(RegistryType::Npm).with_versions("lodash", vec!["4.17.21"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::Npm,
+        create_test_resolver(RegistryType::Npm, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 3, 17).await;
+
+    assert!(
+        !titles
+            .iter()
+            .any(|t| t.starts_with("Pin to locked version")),
+        "did not expect lock-pin action, got: {titles:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn npm_omits_pin_action_when_no_lock_file_present() {
+    let tmp = TempDir::new().unwrap();
+    let manifest_path = tmp.path().join("package.json");
+    let manifest = r#"{
+  "name": "test-project",
+  "dependencies": {
+    "lodash": "^4.17.0"
+  }
+}"#;
+    fs::write(&manifest_path, manifest).unwrap();
+    let uri = Url::from_file_path(&manifest_path).unwrap();
+
+    let (_cache_dir, cache) =
+        create_test_cache(RegistryType::Npm, &[("lodash", vec!["4.17.0", "4.17.21"])]);
+    let registry =
+        MockRegistry::new(RegistryType::Npm).with_versions("lodash", vec!["4.17.0", "4.17.21"]);
+    let resolvers: HashMap<RegistryType, PackageResolver> = HashMap::from([(
+        RegistryType::Npm,
+        create_test_resolver(RegistryType::Npm, registry),
+    )]);
+
+    let (mut service, socket) =
+        LspService::build(|client| Backend::build(client, cache.clone(), resolvers)).finish();
+    let mut notification_rx = spawn_notification_collector(socket);
+
+    service.call(create_initialize_request(1)).await.unwrap();
+    service
+        .call(create_initialized_notification())
+        .await
+        .unwrap();
+
+    service
+        .call(create_did_open_notification(uri.as_str(), manifest))
+        .await
+        .unwrap();
+
+    wait_for_notification(&mut notification_rx, "textDocument/publishDiagnostics")
+        .await
+        .expect("expected publishDiagnostics");
+
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 3, 17).await;
+
+    assert!(
+        !titles
+            .iter()
+            .any(|t| t.starts_with("Pin to locked version")),
+        "did not expect lock-pin action without a lock file, got: {titles:?}"
     );
 }

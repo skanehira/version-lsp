@@ -130,7 +130,8 @@ src/
     │
     ├── locks/              # Lock-File Resolver Implementations
     │   ├── mod.rs
-    │   └── cargo.rs        # CargoLockResolver (Cargo.lock)
+    │   ├── cargo.rs        # CargoLockResolver (Cargo.lock)
+    │   └── npm.rs          # NpmLockResolver (package-lock.json)
     │
     └── matchers/           # Version Matcher Implementations
         ├── mod.rs
@@ -401,6 +402,7 @@ through.
 | Resolver | Lock File | Notes |
 |----------|-----------|-------|
 | CargoLockResolver | `Cargo.lock` (TOML) | shares the `[[package]]` scanner with other TOML-formatted lock files |
+| NpmLockResolver | `package-lock.json` | JSON, walks `packages` then legacy `dependencies` |
 
 **Resolver priority** (registered in `create_default_resolvers`,
 `src/lsp/resolver.rs`): when multiple resolvers are configured for the
