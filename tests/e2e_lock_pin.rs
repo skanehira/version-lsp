@@ -781,3 +781,51 @@ version = "8.1.7"
         "expected pdm-resolved 8.1.7, got: {titles:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pypi_offers_pin_to_locked_version_from_pipfile_lock() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"[project]
+name = "myapp"
+version = "0.1.0"
+dependencies = [
+    "flask>=2.0",
+]
+"#;
+    let pipfile_lock = r#"{
+  "_meta": {},
+  "default": {
+    "flask": { "version": "==3.0.0" }
+  },
+  "develop": {}
+}
+"#;
+    let uri = write_workspace(
+        &tmp,
+        "pyproject.toml",
+        manifest,
+        "Pipfile.lock",
+        pipfile_lock,
+    );
+
+    let (_cache_dir, cache) =
+        create_test_cache(RegistryType::PyPI, &[("flask", vec!["2.0.0", "3.0.0"])]);
+    let mut service =
+        boot_pypi_service(cache, vec!["2.0.0", "3.0.0"], "flask", &uri, manifest).await;
+
+    let actions = collect_code_actions(&mut service, uri.as_str(), 4, 14).await;
+    let pin_action = actions
+        .iter()
+        .find(|ca| ca.title == "Pin to locked version: 3.0.0")
+        .expect("expected pipfile-resolved 3.0.0 pin action (with == prefix stripped)");
+    let edits = pin_action
+        .edit
+        .as_ref()
+        .unwrap()
+        .changes
+        .as_ref()
+        .unwrap()
+        .get(&uri)
+        .unwrap();
+    assert_eq!(edits[0].new_text, "==3.0.0");
+}

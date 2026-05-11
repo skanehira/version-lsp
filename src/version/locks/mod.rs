@@ -6,6 +6,7 @@
 pub mod cargo;
 pub mod npm;
 pub mod pdm;
+pub mod pipfile;
 pub mod pnpm;
 pub mod poetry;
 pub mod uv;
@@ -14,6 +15,7 @@ pub mod yarn;
 pub use cargo::CargoLockResolver;
 pub use npm::NpmLockResolver;
 pub use pdm::PdmLockResolver;
+pub use pipfile::PipfileLockResolver;
 pub use pnpm::PnpmLockResolver;
 pub use poetry::PoetryLockResolver;
 pub use uv::UvLockResolver;

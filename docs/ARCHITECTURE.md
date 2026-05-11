@@ -133,6 +133,7 @@ src/
     │   ├── cargo.rs        # CargoLockResolver (Cargo.lock)
     │   ├── npm.rs          # NpmLockResolver (package-lock.json)
     │   ├── pdm.rs          # PdmLockResolver (pdm.lock)
+    │   ├── pipfile.rs      # PipfileLockResolver (Pipfile.lock)
     │   ├── pnpm.rs         # PnpmLockResolver (pnpm-lock.yaml)
     │   ├── poetry.rs       # PoetryLockResolver (poetry.lock)
     │   ├── uv.rs           # UvLockResolver (uv.lock)
@@ -413,11 +414,12 @@ through.
 | UvLockResolver | `uv.lock` | TOML, same `[[package]]` scanner as Cargo |
 | PoetryLockResolver | `poetry.lock` | TOML, same `[[package]]` scanner as Cargo |
 | PdmLockResolver | `pdm.lock` | TOML, same `[[package]]` scanner as Cargo |
+| PipfileLockResolver | `Pipfile.lock` | JSON, walks `default` then `develop`; strips the stored `==` prefix |
 
 For `RegistryType::Npm`, resolvers are registered in priority order
 **pnpm > yarn > npm**. For `RegistryType::PyPI`,
-**uv > poetry > pdm**. `RegistryType::PnpmCatalog` only registers
-PnpmLockResolver.
+**uv > poetry > pdm > pipfile**. `RegistryType::PnpmCatalog` only
+registers PnpmLockResolver.
 
 **Resolver priority** (registered in `create_default_resolvers`,
 `src/lsp/resolver.rs`): when multiple resolvers are configured for the

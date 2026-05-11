@@ -18,8 +18,8 @@ use crate::parser::traits::Parser;
 use crate::parser::types::RegistryType;
 use crate::version::lock::LockResolver;
 use crate::version::locks::{
-    CargoLockResolver, NpmLockResolver, PdmLockResolver, PnpmLockResolver, PoetryLockResolver,
-    UvLockResolver, YarnLockResolver,
+    CargoLockResolver, NpmLockResolver, PdmLockResolver, PipfileLockResolver, PnpmLockResolver,
+    PoetryLockResolver, UvLockResolver, YarnLockResolver,
 };
 use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
@@ -165,7 +165,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
         )
         .with_lock_resolver(Arc::new(UvLockResolver))
         .with_lock_resolver(Arc::new(PoetryLockResolver))
-        .with_lock_resolver(Arc::new(PdmLockResolver)),
+        .with_lock_resolver(Arc::new(PdmLockResolver))
+        .with_lock_resolver(Arc::new(PipfileLockResolver)),
     );
 
     resolvers.insert(
