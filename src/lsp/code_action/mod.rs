@@ -1,9 +1,11 @@
 //! Code action generation for version bumping and constraint switching
 
 mod constraint;
+mod lock;
 mod upgrade;
 
 pub use constraint::{generate_constraint_code_actions, generate_pypi_constraint_code_actions};
+pub use lock::generate_lock_pin_code_action;
 pub use upgrade::{generate_upgrade_code_actions, generate_upgrade_code_actions_with_sha};
 
 use crate::parser::types::PackageInfo;

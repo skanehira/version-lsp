@@ -8,8 +8,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::{LspConfig, data_dir, db_path};
 use crate::lsp::code_action::{
-    PackageIndex, generate_constraint_code_actions, generate_pypi_constraint_code_actions,
-    generate_upgrade_code_actions, generate_upgrade_code_actions_with_sha,
+    PackageIndex, generate_constraint_code_actions, generate_lock_pin_code_action,
+    generate_pypi_constraint_code_actions, generate_upgrade_code_actions,
+    generate_upgrade_code_actions_with_sha,
 };
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::refresh::{fetch_missing_packages, refresh_packages};
@@ -493,6 +494,17 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
                 actions.extend(generate_pypi_constraint_code_actions(package, uri));
             }
             _ => {}
+        }
+
+        // Append "Pin to locked version" — first lock resolver that resolves wins.
+        if let Some(resolver) = self.resolvers.get(&registry_type) {
+            let lock_action = resolver
+                .lock_resolvers()
+                .iter()
+                .find_map(|lr| generate_lock_pin_code_action(&**lr, package, uri));
+            if let Some(action) = lock_action {
+                actions.push(action);
+            }
         }
 
         if actions.is_empty() {

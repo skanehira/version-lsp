@@ -32,6 +32,8 @@
 pub mod cache;
 pub mod checker;
 pub mod error;
+pub mod lock;
+pub mod locks;
 pub mod matcher;
 pub mod matchers;
 pub mod registries;
