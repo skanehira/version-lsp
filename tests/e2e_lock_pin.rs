@@ -753,3 +753,31 @@ dependencies = [
         "poetry result must not surface when uv exists, got: {titles:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pypi_offers_pin_to_locked_version_from_pdm_lock() {
+    let tmp = TempDir::new().unwrap();
+    let manifest = r#"[project]
+name = "myapp"
+version = "0.1.0"
+dependencies = [
+    "click>=7.0",
+]
+"#;
+    let pdm_lock = r#"[[package]]
+name = "click"
+version = "8.1.7"
+"#;
+    let uri = write_workspace(&tmp, "pyproject.toml", manifest, "pdm.lock", pdm_lock);
+
+    let (_cache_dir, cache) =
+        create_test_cache(RegistryType::PyPI, &[("click", vec!["7.0.0", "8.1.7"])]);
+    let mut service =
+        boot_pypi_service(cache, vec!["7.0.0", "8.1.7"], "click", &uri, manifest).await;
+
+    let titles = collect_code_action_titles(&mut service, uri.as_str(), 4, 14).await;
+    assert!(
+        titles.contains(&"Pin to locked version: 8.1.7".to_string()),
+        "expected pdm-resolved 8.1.7, got: {titles:?}"
+    );
+}

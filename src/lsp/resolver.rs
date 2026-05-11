@@ -18,8 +18,8 @@ use crate::parser::traits::Parser;
 use crate::parser::types::RegistryType;
 use crate::version::lock::LockResolver;
 use crate::version::locks::{
-    CargoLockResolver, NpmLockResolver, PnpmLockResolver, PoetryLockResolver, UvLockResolver,
-    YarnLockResolver,
+    CargoLockResolver, NpmLockResolver, PdmLockResolver, PnpmLockResolver, PoetryLockResolver,
+    UvLockResolver, YarnLockResolver,
 };
 use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
@@ -164,7 +164,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(PypiRegistry::default()),
         )
         .with_lock_resolver(Arc::new(UvLockResolver))
-        .with_lock_resolver(Arc::new(PoetryLockResolver)),
+        .with_lock_resolver(Arc::new(PoetryLockResolver))
+        .with_lock_resolver(Arc::new(PdmLockResolver)),
     );
 
     resolvers.insert(
