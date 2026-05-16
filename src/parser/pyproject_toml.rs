@@ -4,6 +4,7 @@
 //! - `[project].dependencies` - Main project dependencies
 //! - `[build-system].requires` - Build system requirements
 //! - `[project.optional-dependencies]` - Optional dependencies
+//! - `[dependency-groups]` - PEP 735 dependency groups
 //!
 //! URL dependencies (e.g., `pkg @ git+https://...`) are skipped
 //! as they don't exist on PyPI.
@@ -112,8 +113,8 @@ impl PyprojectTomlParser {
                 // [build-system] - look for "requires" key
                 self.extract_key_array(table_node, content, "requires", results);
             }
-            "project.optional-dependencies" => {
-                // [project.optional-dependencies] - all keys have arrays
+            "project.optional-dependencies" | "dependency-groups" => {
+                // [project.optional-dependencies] / [dependency-groups] (PEP 735) - all keys have arrays
                 self.extract_all_arrays(table_node, content, results);
             }
             _ => {}
@@ -450,6 +451,43 @@ dependencies = [
         assert_eq!(result[0].version, "");
         assert_eq!(result[1].name, "flask");
         assert_eq!(result[1].version, "");
+    }
+
+    #[test]
+    fn parse_extracts_dependency_groups() {
+        let parser = PyprojectTomlParser::new();
+        let content = r#"[dependency-groups]
+test = [
+    "pytest>=7.0",
+    "coverage>=7.0",
+]
+docs = [
+    "sphinx>=5.0",
+]
+"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].name, "pytest");
+        assert_eq!(result[0].version, ">=7.0");
+        assert_eq!(result[1].name, "coverage");
+        assert_eq!(result[1].version, ">=7.0");
+        assert_eq!(result[2].name, "sphinx");
+        assert_eq!(result[2].version, ">=5.0");
+    }
+
+    #[test]
+    fn parse_dependency_groups_skips_include_group() {
+        let parser = PyprojectTomlParser::new();
+        let content = r#"[dependency-groups]
+dev = [
+    {include-group = "test"},
+    "ruff>=0.4.0",
+]
+"#;
+        let result = parser.parse(content).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "ruff");
+        assert_eq!(result[0].version, ">=0.4.0");
     }
 
     #[test]

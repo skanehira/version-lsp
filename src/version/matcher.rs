@@ -3,13 +3,20 @@
 use crate::parser::types::RegistryType;
 use crate::version::semver::{
     CompareResult, calculate_latest_major, calculate_latest_minor, calculate_latest_patch,
+    calculate_next_major, calculate_next_minor,
 };
 
-/// Bump target versions for patch, minor, and major
-#[derive(Debug, Default)]
+/// Bump target versions: latest patch, next/latest minor, next/latest major.
+///
+/// `next_*` returns the smallest version in the next minor/major series (useful when
+/// the current version is several releases behind), while `*` returns the absolute
+/// latest within that series.
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct BumpTargets {
     pub patch: Option<String>,
+    pub next_minor: Option<String>,
     pub minor: Option<String>,
+    pub next_major: Option<String>,
     pub major: Option<String>,
 }
 
@@ -46,7 +53,7 @@ pub trait VersionMatcher: Send + Sync {
         latest_version.to_string()
     }
 
-    /// Calculate bump targets (patch, minor, major) for code actions.
+    /// Calculate bump targets (patch, next/latest minor, next/latest major) for code actions.
     ///
     /// Default implementation uses semver-based calculation.
     /// Docker overrides this to handle suffix-aware tag comparison.
@@ -57,7 +64,9 @@ pub trait VersionMatcher: Send + Sync {
     ) -> BumpTargets {
         BumpTargets {
             patch: calculate_latest_patch(current_version, available_versions),
+            next_minor: calculate_next_minor(current_version, available_versions),
             minor: calculate_latest_minor(current_version, available_versions),
+            next_major: calculate_next_major(current_version, available_versions),
             major: calculate_latest_major(current_version, available_versions),
         }
     }

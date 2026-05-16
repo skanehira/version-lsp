@@ -1,0 +1,6 @@
+# CODEOWNERS
+# Owners listed here are automatically requested for review on every PR,
+# so the maintainer is notified even for Dependabot or external updates.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+
+* @skanehira

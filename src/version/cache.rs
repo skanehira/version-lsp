@@ -298,7 +298,7 @@ impl VersionStorer for Cache {
         // For registries without dist-tags (GitHub Actions, Go, etc.),
         // find the semantically highest version
         drop(conn); // Release lock before calling get_versions
-        let versions = Cache::get_versions(self, registry_type, package_name)?;
+        let versions = VersionStorer::get_versions(self, registry_type, package_name)?;
 
         if versions.is_empty() {
             return Ok(None);
@@ -309,10 +309,6 @@ impl VersionStorer for Cache {
             .into_iter()
             .filter_map(|v| {
                 let parsed = crate::version::semver::parse_version(&v)?;
-                // Skip prerelease versions if ignore_prerelease is enabled
-                if self.ignore_prerelease && !parsed.pre.is_empty() {
-                    return None;
-                }
                 Some((v, parsed))
             })
             .max_by(|(_, a), (_, b)| a.cmp(b))
@@ -326,7 +322,15 @@ impl VersionStorer for Cache {
         registry_type: RegistryType,
         package_name: &str,
     ) -> Result<Vec<String>, CacheError> {
-        Cache::get_versions(self, registry_type, package_name)
+        let versions = Cache::get_versions(self, registry_type, package_name)?;
+        if self.ignore_prerelease {
+            Ok(versions
+                .into_iter()
+                .filter(|v| !crate::version::semver::is_prerelease(v))
+                .collect())
+        } else {
+            Ok(versions)
+        }
     }
 
     fn version_exists(

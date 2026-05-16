@@ -93,7 +93,25 @@ impl VersionMatcher for DockerVersionMatcher {
             .max_by(|(_, a), (_, b)| a.cmp(b))
             .map(|(tag, _)| tag.to_string());
 
-        // minor: same major, higher minor
+        // next_minor: smallest minor strictly greater than current.minor within current.major,
+        // then pick the maximum version in that minor series
+        let next_minor_num = same_suffix_versions
+            .iter()
+            .filter(|(_, sv)| {
+                sv.major == current_parsed.semver.major && sv.minor > current_parsed.semver.minor
+            })
+            .map(|(_, sv)| sv.minor)
+            .min();
+
+        let next_minor = next_minor_num.and_then(|minor_num| {
+            same_suffix_versions
+                .iter()
+                .filter(|(_, sv)| sv.major == current_parsed.semver.major && sv.minor == minor_num)
+                .max_by(|(_, a), (_, b)| a.cmp(b))
+                .map(|(tag, _)| tag.to_string())
+        });
+
+        // minor: same major, latest minor (highest version overall)
         let minor = same_suffix_versions
             .iter()
             .filter(|(_, sv)| {
@@ -102,7 +120,23 @@ impl VersionMatcher for DockerVersionMatcher {
             .max_by(|(_, a), (_, b)| a.cmp(b))
             .map(|(tag, _)| tag.to_string());
 
-        // major: higher major
+        // next_major: smallest major strictly greater than current.major,
+        // then pick the maximum version in that major series
+        let next_major_num = same_suffix_versions
+            .iter()
+            .filter(|(_, sv)| sv.major > current_parsed.semver.major)
+            .map(|(_, sv)| sv.major)
+            .min();
+
+        let next_major = next_major_num.and_then(|major_num| {
+            same_suffix_versions
+                .iter()
+                .filter(|(_, sv)| sv.major == major_num)
+                .max_by(|(_, a), (_, b)| a.cmp(b))
+                .map(|(tag, _)| tag.to_string())
+        });
+
+        // major: latest major overall
         let major = same_suffix_versions
             .iter()
             .filter(|(_, sv)| sv.major > current_parsed.semver.major)
@@ -111,7 +145,9 @@ impl VersionMatcher for DockerVersionMatcher {
 
         BumpTargets {
             patch,
+            next_minor,
             minor,
+            next_major,
             major,
         }
     }
@@ -365,25 +401,47 @@ mod tests {
         let versions = vec![
             "1.25".to_string(),
             "1.25-alpine".to_string(),
+            "1.26-alpine".to_string(),
             "1.27".to_string(),
             "1.27-alpine".to_string(),
             "2.0".to_string(),
             "2.0-alpine".to_string(),
+            "3.0-alpine".to_string(),
         ];
         let targets = matcher.calculate_bump_targets("1.25-alpine", &versions);
-        assert_eq!(targets.patch, None);
-        assert_eq!(targets.minor, Some("1.27-alpine".to_string()));
-        assert_eq!(targets.major, Some("2.0-alpine".to_string()));
+        assert_eq!(
+            targets,
+            BumpTargets {
+                patch: None,
+                next_minor: Some("1.26-alpine".to_string()),
+                minor: Some("1.27-alpine".to_string()),
+                next_major: Some("2.0-alpine".to_string()),
+                major: Some("3.0-alpine".to_string()),
+            }
+        );
     }
 
     #[test]
     fn calculate_bump_targets_returns_versions_when_no_suffix() {
         let matcher = DockerVersionMatcher;
-        let versions = vec!["1.25".to_string(), "1.27".to_string(), "2.0".to_string()];
+        let versions = vec![
+            "1.25".to_string(),
+            "1.26".to_string(),
+            "1.27".to_string(),
+            "2.0".to_string(),
+            "3.0".to_string(),
+        ];
         let targets = matcher.calculate_bump_targets("1.25", &versions);
-        assert_eq!(targets.patch, None);
-        assert_eq!(targets.minor, Some("1.27".to_string()));
-        assert_eq!(targets.major, Some("2.0".to_string()));
+        assert_eq!(
+            targets,
+            BumpTargets {
+                patch: None,
+                next_minor: Some("1.26".to_string()),
+                minor: Some("1.27".to_string()),
+                next_major: Some("2.0".to_string()),
+                major: Some("3.0".to_string()),
+            }
+        );
     }
 
     #[test]
@@ -391,8 +449,6 @@ mod tests {
         let matcher = DockerVersionMatcher;
         let versions = vec!["1.25".to_string(), "1.27".to_string()];
         let targets = matcher.calculate_bump_targets("latest", &versions);
-        assert_eq!(targets.patch, None);
-        assert_eq!(targets.minor, None);
-        assert_eq!(targets.major, None);
+        assert_eq!(targets, BumpTargets::default());
     }
 }
