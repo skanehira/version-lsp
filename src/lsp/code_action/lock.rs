@@ -41,8 +41,8 @@ pub fn generate_lock_pin_code_action(
 ///   pinning must emit `==<version>` — a bare version would concat with
 ///   the package name (`requests7.1.0`).
 /// - **GoProxy**: `go.mod` requires the `v` prefix (`v1.2.3`).
-/// - **Npm / PnpmCatalog / CratesIo / Jsr / GitHubActions**: the operator
-///   (if any) lives outside the captured version string, so a bare semver
+/// - **Npm / PnpmCatalog / CratesIo / Jsr / GitHubActions / Docker**: the
+///   operator (if any) lives outside the captured version string, so a bare
 ///   replacement is always valid.
 ///
 /// The match is exhaustive on purpose: adding a new `RegistryType` variant
@@ -55,7 +55,8 @@ fn format_pinned_spec(registry_type: RegistryType, locked_version: &str) -> Stri
         | RegistryType::PnpmCatalog
         | RegistryType::CratesIo
         | RegistryType::Jsr
-        | RegistryType::GitHubActions => locked_version.to_string(),
+        | RegistryType::GitHubActions
+        | RegistryType::Docker => locked_version.to_string(),
     }
 }
 
@@ -171,6 +172,7 @@ mod tests {
     #[case::pypi_emits_equals(RegistryType::PyPI, "7.1.0", "==7.1.0")]
     #[case::go_emits_v_prefix(RegistryType::GoProxy, "1.2.3", "v1.2.3")]
     #[case::go_does_not_double_v_prefix(RegistryType::GoProxy, "v1.2.3", "v1.2.3")]
+    #[case::docker(RegistryType::Docker, "1.29.0", "1.29.0")]
     fn format_pinned_spec_per_registry(
         #[case] registry_type: RegistryType,
         #[case] locked: &str,
