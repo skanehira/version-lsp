@@ -68,6 +68,22 @@ impl DockerRegistry {
         }
     }
 
+    /// Create a `DockerRegistry`, overriding any URL whose argument is `Some`
+    /// and falling back to the hardcoded default for any `None`.
+    pub fn with_overrides(
+        docker_hub_registry_url: Option<&str>,
+        docker_hub_auth_url: Option<&str>,
+        ghcr_registry_url: Option<&str>,
+        ghcr_auth_url: Option<&str>,
+    ) -> Self {
+        Self::new(
+            docker_hub_registry_url.unwrap_or(DOCKER_HUB_REGISTRY_URL),
+            docker_hub_auth_url.unwrap_or(DOCKER_HUB_AUTH_URL),
+            ghcr_registry_url.unwrap_or(GHCR_REGISTRY_URL),
+            ghcr_auth_url.unwrap_or(GHCR_AUTH_URL),
+        )
+    }
+
     /// Fetch a token for the given repository
     async fn fetch_token(
         &self,
