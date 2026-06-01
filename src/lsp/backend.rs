@@ -17,7 +17,6 @@ use crate::lsp::resolver::{PackageResolver, create_resolvers};
 use crate::parser::types::{PackageInfo, RegistryType, detect_parser_type};
 use crate::version::cache::Cache;
 use crate::version::checker::VersionStorer;
-use crate::version::registries::github::GitHubRegistry;
 use crate::version::registry::Registry;
 
 /// Cached parsed packages for a document
@@ -476,22 +475,31 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
             package.name, package.version
         );
 
-        let matcher = {
+        let (matcher, sha_fetcher) = {
             let resolvers = self.resolvers.read().expect("resolvers lock poisoned");
             let Some(resolver) = resolvers.get(&registry_type) else {
                 debug!("No resolver for registry type {:?}", registry_type);
                 return Ok(None);
             };
-            resolver.matcher().clone()
+            (resolver.matcher().clone(), resolver.sha_fetcher().cloned())
         };
 
         // For GitHub Actions with commit hash, use async function to fetch SHA
         let mut actions = if package.registry_type == RegistryType::GitHubActions
             && package.commit_hash.is_some()
         {
-            let sha_fetcher = GitHubRegistry::default();
-            generate_upgrade_code_actions_with_sha(&**storer, package, uri, &sha_fetcher, &*matcher)
-                .await
+            let Some(sha_fetcher) = sha_fetcher else {
+                debug!("No SHA fetcher for registry type {:?}", registry_type);
+                return Ok(None);
+            };
+            generate_upgrade_code_actions_with_sha(
+                &**storer,
+                package,
+                uri,
+                &*sha_fetcher,
+                &*matcher,
+            )
+            .await
         } else {
             generate_upgrade_code_actions(&**storer, package, uri, &*matcher)
         };

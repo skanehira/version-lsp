@@ -95,7 +95,7 @@ pub fn generate_upgrade_code_actions<S: VersionStorer>(
 /// When the package has a commit hash (GitHub Actions), this function will fetch
 /// the commit SHA for each bump target and generate code actions that replace
 /// the hash (and optionally the comment) with the new SHA and version.
-pub async fn generate_upgrade_code_actions_with_sha<S: VersionStorer, F: TagShaFetcher>(
+pub async fn generate_upgrade_code_actions_with_sha<S: VersionStorer, F: TagShaFetcher + ?Sized>(
     storer: &S,
     package: &PackageInfo,
     uri: &Url,
@@ -159,7 +159,7 @@ pub async fn generate_upgrade_code_actions_with_sha<S: VersionStorer, F: TagShaF
 ///
 /// For hash-only packages, we don't know the current semantic version,
 /// so we just offer to update to the latest available version.
-async fn generate_hash_only_actions<S: VersionStorer, F: TagShaFetcher>(
+async fn generate_hash_only_actions<S: VersionStorer, F: TagShaFetcher + ?Sized>(
     storer: &S,
     package: &PackageInfo,
     uri: &Url,
