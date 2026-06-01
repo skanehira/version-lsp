@@ -132,7 +132,7 @@ impl Registry for GitHubRegistry {
             })
             .collect();
 
-        releases_with_dates.sort_by(|(_, a), (_, b)| a.cmp(b));
+        releases_with_dates.sort_by_key(|(_, a)| *a);
 
         let versions = releases_with_dates
             .into_iter()

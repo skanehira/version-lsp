@@ -96,7 +96,7 @@ impl Registry for CratesIoRegistry {
             })
             .collect();
 
-        versions.sort_by(|(_, a), (_, b)| a.cmp(b));
+        versions.sort_by_key(|(_, a)| *a);
 
         let versions: Vec<String> = versions.into_iter().map(|(v, _)| v).collect();
 
