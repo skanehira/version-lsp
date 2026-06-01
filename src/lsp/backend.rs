@@ -121,6 +121,7 @@ impl<S: VersionStorer> Backend<S> {
             RegistryType::Jsr => config.registries.jsr.enabled,
             RegistryType::PyPI => config.registries.pypi.enabled,
             RegistryType::Docker => config.registries.docker.enabled,
+            RegistryType::SwiftPm => config.registries.swift_pm.enabled,
         }
     }
 
