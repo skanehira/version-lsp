@@ -19,6 +19,10 @@ use version_lsp::parser::types::RegistryType;
 use version_lsp::version::cache::Cache;
 use version_lsp::version::checker::VersionStorer;
 use version_lsp::version::error::RegistryError;
+use version_lsp::version::locks::{
+    CargoLockResolver, DenoLockResolver, NpmLockResolver, PdmLockResolver, PipfileLockResolver,
+    PnpmLockResolver, PoetryLockResolver, UvLockResolver, YarnLockResolver,
+};
 use version_lsp::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
     JsrVersionMatcher, NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
@@ -81,12 +85,16 @@ pub fn create_test_resolver(
             Arc::new(PackageJsonParser::new()),
             Arc::new(NpmVersionMatcher),
             Arc::new(mock_registry),
-        ),
+        )
+        .with_lock_resolver(Arc::new(PnpmLockResolver))
+        .with_lock_resolver(Arc::new(YarnLockResolver))
+        .with_lock_resolver(Arc::new(NpmLockResolver)),
         RegistryType::CratesIo => PackageResolver::new(
             Arc::new(CargoTomlParser::new()),
             Arc::new(CratesVersionMatcher),
             Arc::new(mock_registry),
-        ),
+        )
+        .with_lock_resolver(Arc::new(CargoLockResolver)),
         RegistryType::GoProxy => PackageResolver::new(
             Arc::new(GoModParser::new()),
             Arc::new(GoVersionMatcher),
@@ -96,17 +104,23 @@ pub fn create_test_resolver(
             Arc::new(PnpmWorkspaceParser),
             Arc::new(PnpmCatalogMatcher),
             Arc::new(mock_registry),
-        ),
+        )
+        .with_lock_resolver(Arc::new(PnpmLockResolver)),
         RegistryType::Jsr => PackageResolver::new(
             Arc::new(DenoJsonParser::new()),
             Arc::new(JsrVersionMatcher),
             Arc::new(mock_registry),
-        ),
+        )
+        .with_lock_resolver(Arc::new(DenoLockResolver)),
         RegistryType::PyPI => PackageResolver::new(
             Arc::new(PyprojectTomlParser::new()),
             Arc::new(PypiVersionMatcher),
             Arc::new(mock_registry),
-        ),
+        )
+        .with_lock_resolver(Arc::new(UvLockResolver))
+        .with_lock_resolver(Arc::new(PoetryLockResolver))
+        .with_lock_resolver(Arc::new(PdmLockResolver))
+        .with_lock_resolver(Arc::new(PipfileLockResolver)),
         RegistryType::Docker => PackageResolver::new(
             Arc::new(ComposeParser::new()),
             Arc::new(DockerVersionMatcher),

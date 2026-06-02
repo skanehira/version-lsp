@@ -16,6 +16,11 @@ use crate::parser::pnpm_workspace::PnpmWorkspaceParser;
 use crate::parser::pyproject_toml::PyprojectTomlParser;
 use crate::parser::traits::Parser;
 use crate::parser::types::RegistryType;
+use crate::version::lock::LockResolver;
+use crate::version::locks::{
+    CargoLockResolver, DenoLockResolver, NpmLockResolver, PdmLockResolver, PipfileLockResolver,
+    PnpmLockResolver, PoetryLockResolver, UvLockResolver, YarnLockResolver,
+};
 use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
@@ -41,10 +46,11 @@ pub struct PackageResolver {
     parser: Arc<dyn Parser>,
     matcher: Arc<dyn VersionMatcher>,
     registry: Arc<dyn Registry>,
+    lock_resolvers: Vec<Arc<dyn LockResolver>>,
 }
 
 impl PackageResolver {
-    /// Create a new PackageResolver with the given components
+    /// Create a new PackageResolver without lock-file support
     pub fn new(
         parser: Arc<dyn Parser>,
         matcher: Arc<dyn VersionMatcher>,
@@ -54,7 +60,15 @@ impl PackageResolver {
             parser,
             matcher,
             registry,
+            lock_resolvers: Vec::new(),
         }
+    }
+
+    /// Append a lock-file resolver. Resolvers are tried in registration order;
+    /// the first one that yields a locked version wins.
+    pub fn with_lock_resolver(mut self, lock_resolver: Arc<dyn LockResolver>) -> Self {
+        self.lock_resolvers.push(lock_resolver);
+        self
     }
 
     /// Get the parser for this registry type
@@ -70,6 +84,11 @@ impl PackageResolver {
     /// Get the registry for fetching versions
     pub fn registry(&self) -> &Arc<dyn Registry> {
         &self.registry
+    }
+
+    /// Lock-file resolvers configured for this registry, in priority order.
+    pub fn lock_resolvers(&self) -> &[Arc<dyn LockResolver>] {
+        &self.lock_resolvers
     }
 }
 
@@ -93,7 +112,10 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(PackageJsonParser::new()),
             Arc::new(NpmVersionMatcher),
             Arc::new(npm_restistry.clone()),
-        ),
+        )
+        .with_lock_resolver(Arc::new(PnpmLockResolver))
+        .with_lock_resolver(Arc::new(YarnLockResolver))
+        .with_lock_resolver(Arc::new(NpmLockResolver)),
     );
 
     resolvers.insert(
@@ -102,7 +124,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(CargoTomlParser::new()),
             Arc::new(CratesVersionMatcher),
             Arc::new(CratesIoRegistry::default()),
-        ),
+        )
+        .with_lock_resolver(Arc::new(CargoLockResolver)),
     );
 
     resolvers.insert(
@@ -120,7 +143,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(PnpmWorkspaceParser),
             Arc::new(PnpmCatalogMatcher),
             Arc::new(npm_restistry),
-        ),
+        )
+        .with_lock_resolver(Arc::new(PnpmLockResolver)),
     );
 
     resolvers.insert(
@@ -129,7 +153,8 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(DenoJsonParser::new()),
             Arc::new(JsrVersionMatcher),
             Arc::new(JsrRegistry::default()),
-        ),
+        )
+        .with_lock_resolver(Arc::new(DenoLockResolver)),
     );
 
     resolvers.insert(
@@ -138,7 +163,11 @@ pub fn create_default_resolvers() -> HashMap<RegistryType, PackageResolver> {
             Arc::new(PyprojectTomlParser::new()),
             Arc::new(PypiVersionMatcher),
             Arc::new(PypiRegistry::default()),
-        ),
+        )
+        .with_lock_resolver(Arc::new(UvLockResolver))
+        .with_lock_resolver(Arc::new(PoetryLockResolver))
+        .with_lock_resolver(Arc::new(PdmLockResolver))
+        .with_lock_resolver(Arc::new(PipfileLockResolver)),
     );
 
     resolvers.insert(

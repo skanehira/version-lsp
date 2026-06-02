@@ -45,18 +45,22 @@ version-lsp is a Language Server Protocol (LSP) implementation that provides ver
                                   ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                   Package Resolution Pipeline                       │
-├─────────────────────┬─────────────────────┬─────────────────────────┤
-│    Parser Layer     │   Matcher Layer     │    Registry Layer       │
-│    ─────────────    │   ─────────────     │    ──────────────       │
-│  • PackageJson      │  • NpmMatcher       │  • NpmRegistry          │
-│  • CargoToml        │  • CratesMatcher    │  • CratesRegistry       │
-│  • GoMod            │  • GoMatcher        │  • GoProxyRegistry      │
-│  • GitHubActions    │  • GitHubMatcher    │  • GitHubRegistry       │
-│  • PyprojectToml    │  • PypiMatcher      │  • PypiRegistry         │
-│  • DenoJson         │  • JsrMatcher       │  • JsrRegistry          │
-│  • PnpmWorkspace    │  • PnpmCatalog      │  (reuses NpmRegistry)   │
-│  • Compose          │  • DockerMatcher    │  • DockerRegistry       │
-└─────────────────────┴─────────────────────┴─────────────────────────┘
+├─────────────────┬─────────────────┬──────────────────┬──────────────┤
+│  Parser Layer   │  Matcher Layer  │  Registry Layer  │  Lock Layer  │
+│  ─────────────  │  ─────────────  │  ──────────────  │  ──────────  │
+│  • PackageJson  │  • NpmMatcher   │  • NpmRegistry   │  (resolvers  │
+│  • CargoToml    │  • CratesMatch. │  • CratesReg.    │   added per  │
+│  • GoMod        │  • GoMatcher    │  • GoProxyReg.   │   registry   │
+│  • GitHubAct.   │  • GitHubMatch. │  • GitHubReg.    │   family —   │
+│  • DenoJson     │  • JsrMatcher   │  • JsrRegistry   │   see below) │
+│  • Pyproject    │  • PypiMatcher  │  • PypiRegistry  │              │
+│  • PnpmWorksp.  │  • PnpmCatalog  │  (reuses NpmReg) │              │
+│  • Compose      │  • DockerMatch. │  • DockerReg.    │              │
+└─────────────────┴─────────────────┴──────────────────┴──────────────┘
+                          (Lock Layer feeds the
+                       "Pin to locked version" code
+                        action, not the diagnostics
+                              pipeline.)
                                   │
                                   ▼
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -106,10 +110,11 @@ src/
 └── version/                 # Version Management Layer
     ├── mod.rs              # Module documentation & architecture diagram
     ├── types.rs            # PackageVersions struct
-    ├── error.rs            # CacheError, RegistryError enums
+    ├── error.rs            # CacheError, RegistryError, LockError enums
     ├── registry.rs         # Registry trait definition
     ├── matcher.rs          # VersionMatcher trait definition
     ├── checker.rs          # Version comparison & VersionStorer trait
+    ├── lock.rs             # LockResolver trait + lock-file lookup helper
     ├── semver.rs           # Semver utilities
     ├── cache.rs            # Cache implementation (SQLite)
     │
@@ -122,6 +127,18 @@ src/
     │   ├── pypi.rs         # PyPI API client
     │   ├── jsr.rs          # JSR API client
     │   └── docker.rs       # Docker Hub / ghcr.io API client
+    │
+    ├── locks/              # Lock-File Resolver Implementations
+    │   ├── mod.rs
+    │   ├── cargo.rs        # CargoLockResolver (Cargo.lock)
+    │   ├── deno.rs         # DenoLockResolver (deno.lock, JSR specifiers)
+    │   ├── npm.rs          # NpmLockResolver (package-lock.json)
+    │   ├── pdm.rs          # PdmLockResolver (pdm.lock)
+    │   ├── pipfile.rs      # PipfileLockResolver (Pipfile.lock)
+    │   ├── pnpm.rs         # PnpmLockResolver (pnpm-lock.yaml)
+    │   ├── poetry.rs       # PoetryLockResolver (poetry.lock)
+    │   ├── uv.rs           # UvLockResolver (uv.lock)
+    │   └── yarn.rs         # YarnLockResolver (yarn.lock v1 + Berry)
     │
     └── matchers/           # Version Matcher Implementations
         ├── mod.rs
@@ -362,6 +379,68 @@ pub trait Registry: Send + Sync {
 | PypiRegistry    | `pypi.org/pypi/{pkg}/json`                             | Excludes yanked versions                  |
 | JsrRegistry     | `jsr.io/api/scopes/{scope}/packages/{pkg}`             | JSR scoped packages                       |
 | DockerRegistry  | Docker Hub: `registry-1.docker.io`, ghcr.io: `ghcr.io` | Token auth, tag filtering/sorting         |
+
+### LockResolver (src/version/lock.rs)
+
+Trait for reading the version actually installed in the workspace from
+its lock file. Powers the **Pin to locked version** code action — it
+does not participate in the diagnostics pipeline.
+
+```rust
+pub trait LockResolver: Send + Sync {
+    fn registry_type(&self) -> RegistryType;
+    fn resolve_locked_version(
+        &self,
+        manifest_uri: &Url,
+        package_name: &str,
+    ) -> Result<Option<String>, LockError>;
+}
+```
+
+`PackageResolver` holds an ordered `Vec<Arc<dyn LockResolver>>` per
+registry type. When the code action runs, resolvers are tried in
+registration order and the first one that returns `Ok(Some(_))` wins.
+Returning `Ok(None)` means "lock file absent or package not listed" and
+falls through to the next resolver; `Err(_)` is logged and also falls
+through.
+
+**Implementations** (added per registry family):
+
+| Resolver | Lock File | Notes |
+|----------|-----------|-------|
+| CargoLockResolver | `Cargo.lock` (TOML) | shares the `[[package]]` scanner with other TOML-formatted lock files |
+| NpmLockResolver | `package-lock.json` | JSON, walks `packages` then legacy `dependencies` |
+| PnpmLockResolver | `pnpm-lock.yaml` | YAML, also resolves pnpm catalog references |
+| YarnLockResolver | `yarn.lock` (v1 + Berry) | both quoted-block and YAML-ish dialects, multi-spec keys, Berry `_peer@x` suffix stripped |
+| UvLockResolver | `uv.lock` | TOML, same `[[package]]` scanner as Cargo |
+| PoetryLockResolver | `poetry.lock` | TOML, same `[[package]]` scanner as Cargo |
+| PdmLockResolver | `pdm.lock` | TOML, same `[[package]]` scanner as Cargo |
+| PipfileLockResolver | `Pipfile.lock` | JSON, walks `default` then `develop`; strips the stored `==` prefix |
+| DenoLockResolver | `deno.lock` (v3/v4) | scans `specifiers` for `jsr:<name>@…`, strips peer-dep suffix |
+
+For `RegistryType::Npm`, resolvers are registered in priority order
+**pnpm > yarn > npm**. For `RegistryType::PyPI`,
+**uv > poetry > pdm > pipfile**. `RegistryType::Jsr` only registers
+DenoLockResolver. `RegistryType::PnpmCatalog` only registers
+PnpmLockResolver.
+
+**Resolver priority** (registered in `create_default_resolvers`,
+`src/lsp/resolver.rs`): when multiple resolvers are configured for the
+same `RegistryType`, they are tried in registration order and the first
+one that returns `Ok(Some(_))` wins. This is what lets a workspace with
+both `pnpm-lock.yaml` and `package-lock.json` pin against whichever tool
+is actually authoritative.
+
+**Pin formatting** (`src/lsp/code_action/lock.rs::format_pinned_spec`)
+is exhaustive over `RegistryType`. Most registries emit the bare
+version, but two are special:
+- **PyPI** emits `==<version>` because PEP 508 stores the operator
+  inside the version field captured by the parser
+- **GoProxy** emits `v<version>` because `go.mod` requires the `v`
+  prefix (idempotent on already-prefixed input)
+
+Adding a new `RegistryType` is a compile error here until the pin
+contract is decided.
 
 ---
 

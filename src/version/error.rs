@@ -23,3 +23,15 @@ pub enum RegistryError {
     #[error("Invalid response: {0}")]
     InvalidResponse(String),
 }
+
+#[derive(Debug, Error)]
+pub enum LockError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Invalid lock file format: {0}")]
+    InvalidFormat(String),
+
+    #[error("Manifest URI is not a local file: {0}")]
+    InvalidManifestUri(String),
+}

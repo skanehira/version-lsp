@@ -25,6 +25,16 @@ A Language Server Protocol (LSP) implementation that provides version checking d
 - Reports errors for non-existent versions
 - Supports version ranges (e.g., `^1.0.0`, `~1.0.0`, `>=1.0.0`)
 - Caches version information locally for fast response
+- Code action **Pin to locked version**: pins a dependency to the version
+  recorded in the workspace lock file. Supported formats:
+  - `Cargo.lock`
+  - `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` (v1 + Berry)
+  - `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`
+  - `deno.lock`
+
+  When multiple lock files coexist (e.g. `pnpm-lock.yaml` alongside
+  `package-lock.json`, or `uv.lock` alongside `poetry.lock`), the more
+  specific tool wins (pnpm > yarn > npm; uv > poetry > pdm > pipfile).
 
 ## Supported Files
 
