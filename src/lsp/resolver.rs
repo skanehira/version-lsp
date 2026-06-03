@@ -298,8 +298,6 @@ mod tests {
 
     #[tokio::test]
     async fn create_resolvers_routes_github_sha_fetches_to_overridden_url() {
-        use crate::version::registries::github::TagShaFetcher;
-
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/repos/actions/checkout/tags")
