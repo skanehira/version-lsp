@@ -13,11 +13,10 @@ use crate::lsp::code_action::{
 };
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::refresh::{fetch_missing_packages, refresh_packages};
-use crate::lsp::resolver::{PackageResolver, create_default_resolvers};
+use crate::lsp::resolver::{PackageResolver, create_resolvers};
 use crate::parser::types::{PackageInfo, RegistryType, detect_parser_type};
 use crate::version::cache::Cache;
 use crate::version::checker::VersionStorer;
-use crate::version::registries::github::GitHubRegistry;
 use crate::version::registry::Registry;
 
 /// Cached parsed packages for a document
@@ -29,7 +28,7 @@ pub struct Backend<S: VersionStorer> {
     client: Client,
     storer: Option<Arc<S>>,
     config: Arc<RwLock<LspConfig>>,
-    resolvers: HashMap<RegistryType, PackageResolver>,
+    resolvers: Arc<RwLock<HashMap<RegistryType, PackageResolver>>>,
     documents: Arc<RwLock<HashMap<Url, DocumentCache>>>,
 }
 
@@ -37,12 +36,12 @@ impl Backend<Cache> {
     pub fn new(client: Client) -> Self {
         let config = LspConfig::default();
         let storer = Self::initialize_storer(&config);
-        let resolvers = create_default_resolvers();
+        let resolvers = create_resolvers(&config);
         Self {
             client,
             storer,
             config: Arc::new(RwLock::new(config)),
-            resolvers,
+            resolvers: Arc::new(RwLock::new(resolvers)),
             documents: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -85,7 +84,7 @@ impl<S: VersionStorer> Backend<S> {
             client,
             storer: Some(storer),
             config: Arc::new(RwLock::new(LspConfig::default())),
-            resolvers,
+            resolvers: Arc::new(RwLock::new(resolvers)),
             documents: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -93,8 +92,9 @@ impl<S: VersionStorer> Backend<S> {
     /// Parse document and cache packages
     fn cache_document(&self, uri: &Url, content: &str) {
         let uri_str = uri.as_str();
+        let resolvers = self.resolvers.read().expect("resolvers lock poisoned");
         let packages = detect_parser_type(uri_str)
-            .and_then(|registry_type| self.resolvers.get(&registry_type))
+            .and_then(|registry_type| resolvers.get(&registry_type))
             .map(|resolver| {
                 resolver
                     .parser()
@@ -103,6 +103,7 @@ impl<S: VersionStorer> Backend<S> {
                     .unwrap_or_default()
             })
             .unwrap_or_default();
+        drop(resolvers);
 
         let mut docs = self.documents.write().expect("documents lock poisoned");
         docs.insert(uri.clone(), DocumentCache { packages });
@@ -127,6 +128,7 @@ impl<S: VersionStorer> Backend<S> {
     fn spawn_fetch_configuration(&self) {
         let client = self.client.clone();
         let config = self.config.clone();
+        let resolvers = self.resolvers.clone();
 
         tokio::spawn(async move {
             let items = vec![ConfigurationItem {
@@ -152,8 +154,18 @@ impl<S: VersionStorer> Backend<S> {
                             }
                         };
                         info!("Configuration updated: {:?}", new_config);
+
+                        // Rebuild resolvers from the new config so URL
+                        // overrides take effect on subsequent fetches.
+                        let new_resolvers = create_resolvers(&new_config);
+
                         let mut cfg = config.write().expect("config lock poisoned");
                         *cfg = new_config;
+                        drop(cfg);
+
+                        let mut res = resolvers.write().expect("resolvers lock poisoned");
+                        *res = new_resolvers;
+                        debug!("Resolvers rebuilt with new configuration");
                     }
                 }
                 Err(e) => {
@@ -184,9 +196,12 @@ impl<S: VersionStorer> Backend<S> {
             return;
         };
 
-        // Extract registries from resolvers for background task
+        // Snapshot registries from the current resolvers so the spawned task
+        // doesn't need to hold the lock or share `self`.
         let registries: HashMap<RegistryType, Arc<dyn Registry>> = self
             .resolvers
+            .read()
+            .expect("resolvers lock poisoned")
             .iter()
             .map(|(k, v)| (*k, v.registry().clone()))
             .collect();
@@ -244,9 +259,19 @@ impl<S: VersionStorer> Backend<S> {
             return;
         }
 
-        let Some(resolver) = self.resolvers.get(&registry_type) else {
-            debug!("No resolver found for registry type: {:?}", registry_type);
-            return;
+        // Snapshot parser/matcher/registry from the resolver under a brief
+        // read lock so we don't hold the lock across awaits or `tokio::spawn`.
+        let (parser, matcher, registry) = {
+            let resolvers = self.resolvers.read().expect("resolvers lock poisoned");
+            let Some(resolver) = resolvers.get(&registry_type) else {
+                debug!("No resolver found for registry type: {:?}", registry_type);
+                return;
+            };
+            (
+                resolver.parser().clone(),
+                resolver.matcher().clone(),
+                resolver.registry().clone(),
+            )
         };
 
         let Some(storer) = &self.storer else {
@@ -260,19 +285,13 @@ impl<S: VersionStorer> Backend<S> {
         };
 
         // Parse document to get packages (needed for on-demand fetch)
-        let packages = resolver
-            .parser()
+        let packages = parser
             .parse(&content)
             .inspect_err(|e| warn!("Failed to parse {}: {}", uri_str, e))
             .unwrap_or_default();
         debug!("Parsed {} packages: {:?}", packages.len(), packages);
 
-        let diagnostics = generate_diagnostics(
-            &**resolver.parser(),
-            &**resolver.matcher(),
-            &**storer,
-            &content,
-        );
+        let diagnostics = generate_diagnostics(&*parser, &*matcher, &**storer, &content);
 
         self.client
             .log_message(
@@ -295,11 +314,8 @@ impl<S: VersionStorer> Backend<S> {
                 "Spawning background task to fetch {} packages",
                 packages.len()
             );
-            let registry = resolver.registry().clone();
             let storer = storer.clone();
             let client = self.client.clone();
-            let parser = resolver.parser().clone();
-            let matcher = resolver.matcher().clone();
 
             tokio::spawn(async move {
                 debug!("Background task started for fetching packages");
@@ -459,26 +475,33 @@ impl<S: VersionStorer> LanguageServer for Backend<S> {
             package.name, package.version
         );
 
-        let Some(resolver) = self.resolvers.get(&registry_type) else {
-            debug!("No resolver for registry type {:?}", registry_type);
-            return Ok(None);
+        let (matcher, sha_fetcher) = {
+            let resolvers = self.resolvers.read().expect("resolvers lock poisoned");
+            let Some(resolver) = resolvers.get(&registry_type) else {
+                debug!("No resolver for registry type {:?}", registry_type);
+                return Ok(None);
+            };
+            (resolver.matcher().clone(), resolver.sha_fetcher().cloned())
         };
 
         // For GitHub Actions with commit hash, use async function to fetch SHA
         let mut actions = if package.registry_type == RegistryType::GitHubActions
             && package.commit_hash.is_some()
         {
-            let sha_fetcher = GitHubRegistry::default();
+            let Some(sha_fetcher) = sha_fetcher else {
+                debug!("No SHA fetcher for registry type {:?}", registry_type);
+                return Ok(None);
+            };
             generate_upgrade_code_actions_with_sha(
                 &**storer,
                 package,
                 uri,
-                &sha_fetcher,
-                &**resolver.matcher(),
+                &*sha_fetcher,
+                &*matcher,
             )
             .await
         } else {
-            generate_upgrade_code_actions(&**storer, package, uri, &**resolver.matcher())
+            generate_upgrade_code_actions(&**storer, package, uri, &*matcher)
         };
 
         // Append constraint actions based on registry type

@@ -157,6 +157,24 @@ lspconfig.version_lsp.setup({
         pnpmCatalog = { enabled = true },
         jsr = { enabled = true },
         docker = { enabled = true },
+
+        -- Optional URL overrides (e.g. for private mirrors). When a
+        -- registry's `url` is unset the default public registry is used.
+        -- Credentials embedded in URLs are redacted from logs.
+        --
+        -- pypi = { url = "https://pypi.internal.example.com" },
+        -- npm = { url = "https://npm.internal.example.com" },
+        -- crates = { url = "https://crates.internal.example.com/api/v1/crates" },
+        -- goProxy = { url = "https://goproxy.internal.example.com" },
+        -- github = { url = "https://github.example.com/api/v3" },
+        -- jsr = { url = "https://jsr.internal.example.com" },
+        -- pnpmCatalog = { url = "https://npm.internal.example.com" },
+        -- docker = {
+        --   dockerHubRegistryUrl = "https://hub.internal.example.com",
+        --   dockerHubAuthUrl = "https://hub.internal.example.com/token",
+        --   ghcrRegistryUrl = "https://ghcr.internal.example.com",
+        --   ghcrAuthUrl = "https://ghcr.internal.example.com/token",
+        -- },
       },
       ignorePrerelease = true,  -- Ignore prerelease versions (default: true)
     },
@@ -170,14 +188,33 @@ lspconfig.version_lsp.setup({
 | -------------------------------- | ------- | ---------- | ---------------------------------------------------------- |
 | `cache.refreshInterval`          | number  | `86400000` | Cache refresh interval in milliseconds (default: 24 hours) |
 | `registries.npm.enabled`         | boolean | `true`     | Enable npm registry checks                                 |
+| `registries.npm.url`             | string  | unset      | Override npm registry base URL                             |
 | `registries.crates.enabled`      | boolean | `true`     | Enable crates.io registry checks                           |
+| `registries.crates.url`          | string  | unset      | Override crates.io API base URL                            |
 | `registries.goProxy.enabled`     | boolean | `true`     | Enable Go Proxy registry checks                            |
+| `registries.goProxy.url`         | string  | unset      | Override Go Proxy base URL                                 |
 | `registries.pypi.enabled`        | boolean | `true`     | Enable PyPI registry checks                                |
+| `registries.pypi.url`            | string  | unset      | Override PyPI base URL                                     |
 | `registries.github.enabled`      | boolean | `true`     | Enable GitHub Releases checks                              |
+| `registries.github.url`          | string  | unset      | Override GitHub API base URL (Enterprise). Falls back to `GITHUB_API_BASE_URL` env var when unset |
 | `registries.pnpmCatalog.enabled` | boolean | `true`     | Enable pnpm catalog checks                                 |
+| `registries.pnpmCatalog.url`     | string  | unset      | Override pnpm catalog registry URL (defaults to `npm.url`) |
 | `registries.jsr.enabled`         | boolean | `true`     | Enable JSR registry checks                                 |
+| `registries.jsr.url`             | string  | unset      | Override JSR base URL                                      |
 | `registries.docker.enabled`      | boolean | `true`     | Enable Docker Hub / ghcr.io checks                         |
+| `registries.docker.dockerHubRegistryUrl` | string | unset | Override Docker Hub registry URL                          |
+| `registries.docker.dockerHubAuthUrl`     | string | unset | Override Docker Hub auth URL                              |
+| `registries.docker.ghcrRegistryUrl`      | string | unset | Override ghcr.io registry URL                             |
+| `registries.docker.ghcrAuthUrl`          | string | unset | Override ghcr.io auth URL                                 |
 | `ignorePrerelease`               | boolean | `true`     | Ignore prerelease versions (alpha, beta, rc, etc.)         |
+
+URL overrides apply on the next configuration push from your editor (delivered
+via `workspace/configuration` after `initialized`). Subsequent fetches use the
+new URL; cached versions are not invalidated.
+
+For private indexes that need credentials, embed them in the URL
+(`https://user:token@private.example.com/`). User/password are redacted from
+log output. There is currently no separate auth field.
 
 ## Data Storage
 

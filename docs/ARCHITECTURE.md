@@ -363,6 +363,12 @@ pub trait Registry: Send + Sync {
 | JsrRegistry     | `jsr.io/api/scopes/{scope}/packages/{pkg}`             | JSR scoped packages                       |
 | DockerRegistry  | Docker Hub: `registry-1.docker.io`, ghcr.io: `ghcr.io` | Token auth, tag filtering/sorting         |
 
+All registry base URLs are overridable via `registries.<name>.url` in the LSP
+configuration (Docker exposes four URLs: `dockerHubRegistryUrl`,
+`dockerHubAuthUrl`, `ghcrRegistryUrl`, `ghcrAuthUrl`). When the user pushes a
+new configuration the resolver map in `Backend` is rebuilt; subsequent fetches
+hit the new URLs. The cache is not invalidated.
+
 ---
 
 ## Configuration
@@ -383,19 +389,30 @@ pub trait Registry: Send + Sync {
       "refreshInterval": 86400000
     },
     "registries": {
-      "npm": { "enabled": true },
-      "crates": { "enabled": true },
-      "goProxy": { "enabled": true },
-      "github": { "enabled": true },
-      "pypi": { "enabled": true },
-      "pnpmCatalog": { "enabled": true },
-      "jsr": { "enabled": true },
-      "docker": { "enabled": true }
+      "npm": { "enabled": true, "url": null },
+      "crates": { "enabled": true, "url": null },
+      "goProxy": { "enabled": true, "url": null },
+      "github": { "enabled": true, "url": null },
+      "pypi": { "enabled": true, "url": null },
+      "pnpmCatalog": { "enabled": true, "url": null },
+      "jsr": { "enabled": true, "url": null },
+      "docker": {
+        "enabled": true,
+        "dockerHubRegistryUrl": null,
+        "dockerHubAuthUrl": null,
+        "ghcrRegistryUrl": null,
+        "ghcrAuthUrl": null
+      }
     },
     "ignorePrerelease": true
   }
 }
 ```
+
+When a `url` is `null` (or absent), the registry uses its hardcoded default.
+URL-embedded credentials (`https://user:token@host/path`) are redacted from
+log output via a custom `Debug` impl on `RegistryConfig` and
+`DockerRegistryConfig`.
 
 ### Constants
 

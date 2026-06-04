@@ -23,6 +23,7 @@ use version_lsp::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
     JsrVersionMatcher, NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
 };
+use version_lsp::version::registries::github::GitHubRegistry;
 use version_lsp::version::registry::Registry;
 use version_lsp::version::types::PackageVersions;
 
@@ -72,11 +73,14 @@ pub fn create_test_resolver(
     mock_registry: MockRegistry,
 ) -> PackageResolver {
     match registry_type {
+        // The SHA fetcher honors GITHUB_API_BASE_URL, which the commit-hash
+        // code action tests point at their mock server.
         RegistryType::GitHubActions => PackageResolver::new(
             Arc::new(GitHubActionsParser::new()),
             Arc::new(GitHubActionsMatcher),
             Arc::new(mock_registry),
-        ),
+        )
+        .with_sha_fetcher(Arc::new(GitHubRegistry::default())),
         RegistryType::Npm => PackageResolver::new(
             Arc::new(PackageJsonParser::new()),
             Arc::new(NpmVersionMatcher),
