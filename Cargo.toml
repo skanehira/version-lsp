@@ -59,7 +59,7 @@ futures = "0.3"
 regex = "1.12.3"
 
 [dev-dependencies]
-mockall = "0.14"
+mockall = "0.15"
 mockito = "1.7"
 rstest = "0.26"
 serial_test = "3"
