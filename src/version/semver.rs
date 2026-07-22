@@ -347,4 +347,91 @@ mod tests {
         assert!(!version.pre.is_empty(), "prerelease should not be empty");
         assert_eq!(version.pre.as_str(), "preview.4");
     }
+
+    // Property-based tests: parse_version の入力空間は「semver 文法 + 12 種の
+    // range prefix」というルールで正確に定義できるため、examples では拾いきれない
+    // prerelease / build metadata / prefix の組合せをジェネレータで広くカバーする。
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// semver の dot-separated identifier 1 要素。
+        /// 数字始まりの場合は leading zero を含まないよう u32 の to_string() を使う
+        /// (先頭ゼロは英字始まりの識別子と数値識別子の混同を避けるため生成しない)。
+        fn identifier_strategy() -> impl Strategy<Value = String> {
+            prop_oneof![
+                "[a-zA-Z][a-zA-Z0-9-]{0,5}",
+                (0u32..1000).prop_map(|n| n.to_string()),
+            ]
+        }
+
+        fn dotted_identifiers_strategy() -> impl Strategy<Value = String> {
+            prop::collection::vec(identifier_strategy(), 1..=3).prop_map(|parts| parts.join("."))
+        }
+
+        /// parse_version がサポートする range prefix / v プレフィックス全種
+        fn prefix_strategy() -> impl Strategy<Value = &'static str> {
+            prop_oneof![
+                Just(""),
+                Just("^"),
+                Just("~"),
+                Just(">="),
+                Just("<="),
+                Just(">"),
+                Just("<"),
+                Just("="),
+                Just("v"),
+                Just("~="),
+                Just("=="),
+                Just("!="),
+            ]
+        }
+
+        proptest! {
+            /// P1: ラウンドトリップ。任意の Version を prefix 付き文字列にしても
+            /// parse_version で元の Version に戻る。
+            #[test]
+            fn parse_version_roundtrips_with_any_prefix(
+                major in 0u64..1000,
+                minor in 0u64..1000,
+                patch in 0u64..1000,
+                pre in proptest::option::of(dotted_identifiers_strategy()),
+                build in proptest::option::of(dotted_identifiers_strategy()),
+                prefix in prefix_strategy(),
+            ) {
+                let mut version = Version::new(major, minor, patch);
+                if let Some(pre) = &pre {
+                    version.pre = semver::Prerelease::new(pre).unwrap();
+                }
+                if let Some(build) = &build {
+                    version.build = semver::BuildMetadata::new(build).unwrap();
+                }
+
+                let input = format!("{prefix}{version}");
+                prop_assert_eq!(parse_version(&input), Some(version));
+            }
+
+            /// P2: 部分バージョンはゼロ埋めで正規化される。
+            #[test]
+            fn parse_version_normalizes_partial_versions(
+                major in 0u64..10_000,
+                minor in 0u64..10_000,
+            ) {
+                prop_assert_eq!(
+                    parse_version(&major.to_string()),
+                    Some(Version::new(major, 0, 0))
+                );
+                prop_assert_eq!(
+                    parse_version(&format!("{major}.{minor}")),
+                    Some(Version::new(major, minor, 0))
+                );
+            }
+
+            /// P3: 全域性。有効/無効を問わず任意の Unicode 文字列で panic しない。
+            #[test]
+            fn parse_version_never_panics_on_arbitrary_input(s in "\\PC*") {
+                let _ = parse_version(&s);
+            }
+        }
+    }
 }
