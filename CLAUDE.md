@@ -42,7 +42,7 @@ cargo clippy
 
 ## Architecture
 
-version-lsp is a Language Server Protocol implementation that checks package dependency versions across multiple registries (npm, crates.io, Go proxy, PyPI, GitHub Actions, JSR, pnpm catalogs, Docker Hub/ghcr.io).
+version-lsp is a Language Server Protocol implementation that checks package dependency versions across multiple registries (npm, crates.io, Go proxy, PyPI, GitHub Actions, JSR, pnpm catalogs, Docker Hub/ghcr.io, Swift Package Manager).
 
 詳細なアーキテクチャ（データフロー図、DB スキーマ、各コンポーネントの責務など）は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照すること。実装・設計変更時は必ずこのドキュメントを確認し、整合性を保つこと。
 

@@ -21,6 +21,7 @@ version-lsp is a Language Server Protocol (LSP) implementation that provides ver
 | JSR                  | deno.json / deno.jsonc             | semver range                                  |          |
 | npm (pnpm)           | pnpm-workspace.yaml                | semver range (catalog definitions)            |          |
 | Docker Hub / ghcr.io | compose.yaml / docker-compose.yaml | Suffix-aware tag comparison                   |          |
+| GitHub Releases      | Package.swift                      | SPM (`from:`, `exact:`, `.upToNextMajor`, `.upToNextMinor`, `A ..< B`, `A ... B`) |  |
 
 ---
 
@@ -56,6 +57,7 @@ version-lsp is a Language Server Protocol (LSP) implementation that provides ver
 │  • DenoJson         │  • JsrMatcher       │  • JsrRegistry          │
 │  • PnpmWorkspace    │  • PnpmCatalog      │  (reuses NpmRegistry)   │
 │  • Compose          │  • DockerMatcher    │  • DockerRegistry       │
+│  • PackageSwift     │  • SwiftPmMatcher   │  (reuses GitHubRegistry)│
 └─────────────────────┴─────────────────────┴─────────────────────────┘
                                   │
                                   ▼
@@ -101,7 +103,8 @@ src/
 │   ├── pyproject_toml.rs   # Python pyproject.toml parser
 │   ├── deno_json.rs        # Deno deno.json/deno.jsonc parser
 │   ├── pnpm_workspace.rs   # pnpm pnpm-workspace.yaml parser
-│   └── compose.rs          # Docker compose.yaml parser
+│   ├── compose.rs          # Docker compose.yaml parser
+│   └── package_swift.rs    # Swift Package.swift parser
 │
 └── version/                 # Version Management Layer
     ├── mod.rs              # Module documentation & architecture diagram
@@ -132,7 +135,8 @@ src/
         ├── pypi.rs         # PyPI PEP 508 matching
         ├── jsr.rs          # JSR semver range matching
         ├── pnpm_catalog.rs # pnpm catalog (reuses npm matching)
-        └── docker.rs       # Docker suffix-aware tag matching
+        ├── docker.rs       # Docker suffix-aware tag matching
+        └── swift_pm.rs     # SPM matcher (reuses Cargo caret semantics)
 ```
 
 ---
@@ -339,6 +343,7 @@ pub trait VersionMatcher: Send + Sync {
 | JsrMatcher         | `^1.2.3`, `~1.2.3`              | semver range evaluation                                |
 | PnpmCatalogMatcher | `^1.2.3`, `~1.2.3`              | semver range (same as npm)                             |
 | DockerMatcher      | `1.25`, `1.25-alpine`, `v1.0.0` | Suffix-aware tag comparison, `resolve_latest` override |
+| SwiftPmMatcher     | `1.2.3`, `>=1.0.0, <2.0.0` (bare or compound) | Caret-like for bare versions; ranges from SPM `..<`/`...` (parser produces compound). Strips `v` from GitHub tags. |
 
 ### Registry (src/version/registry.rs)
 
@@ -358,7 +363,7 @@ pub trait Registry: Send + Sync {
 | NpmRegistry     | `registry.npmjs.org/{pkg}`                             | dist-tags support, sorted by publish date |
 | CratesRegistry  | `crates.io/api/v1/crates/{pkg}`                        | Excludes yanked versions                  |
 | GoProxyRegistry | `proxy.golang.org/{mod}/@v/list`                       | Module path encoding                      |
-| GitHubRegistry  | `api.github.com/repos/{owner/repo}/releases`           | Rate limit handling                       |
+| GitHubRegistry  | `api.github.com/repos/{owner/repo}/releases`           | Rate limit handling; reused by SwiftPm    |
 | PypiRegistry    | `pypi.org/pypi/{pkg}/json`                             | Excludes yanked versions                  |
 | JsrRegistry     | `jsr.io/api/scopes/{scope}/packages/{pkg}`             | JSR scoped packages                       |
 | DockerRegistry  | Docker Hub: `registry-1.docker.io`, ghcr.io: `ghcr.io` | Token auth, tag filtering/sorting         |
@@ -396,6 +401,7 @@ hit the new URLs. The cache is not invalidated.
       "pypi": { "enabled": true, "url": null },
       "pnpmCatalog": { "enabled": true, "url": null },
       "jsr": { "enabled": true, "url": null },
+      "swiftPm": { "enabled": true, "url": null },
       "docker": {
         "enabled": true,
         "dockerHubRegistryUrl": null,
@@ -413,6 +419,13 @@ When a `url` is `null` (or absent), the registry uses its hardcoded default.
 URL-embedded credentials (`https://user:token@host/path`) are redacted from
 log output via a custom `Debug` impl on `RegistryConfig` and
 `DockerRegistryConfig`.
+
+For Swift Package Manager, the configured `swiftPm.url` does double duty: it
+overrides the GitHub API base URL the registry calls _and_ adds the URL's
+bare host to the parser's allow-list of accepted dependency hosts. This makes
+GitHub Enterprise mirrors work end-to-end: dependencies declared with
+`https://github.example.com/owner/repo.git` URLs are extracted and checked
+against the configured Enterprise API.
 
 ### Constants
 
@@ -471,7 +484,8 @@ tests/
 ├── e2e_github.rs      # GitHub Actions E2E tests
 ├── e2e_jsr.rs         # JSR E2E tests
 ├── e2e_pnpm.rs        # pnpm catalog E2E tests
-└── e2e_docker.rs      # Docker Hub / ghcr.io E2E tests
+├── e2e_docker.rs      # Docker Hub / ghcr.io E2E tests
+└── e2e_swift_pm.rs    # Swift Package Manager E2E tests
 ```
 
 ### Test Patterns

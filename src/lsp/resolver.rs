@@ -13,6 +13,7 @@ use crate::parser::deno_json::DenoJsonParser;
 use crate::parser::github_actions::GitHubActionsParser;
 use crate::parser::go_mod::GoModParser;
 use crate::parser::package_json::PackageJsonParser;
+use crate::parser::package_swift::PackageSwiftParser;
 use crate::parser::pnpm_workspace::PnpmWorkspaceParser;
 use crate::parser::pyproject_toml::PyprojectTomlParser;
 use crate::parser::traits::Parser;
@@ -21,6 +22,7 @@ use crate::version::matcher::VersionMatcher;
 use crate::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
     JsrVersionMatcher, NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
+    SwiftPmVersionMatcher,
 };
 use crate::version::registries::crates_io::CratesIoRegistry;
 use crate::version::registries::docker::DockerRegistry;
@@ -193,6 +195,15 @@ pub fn create_resolvers(config: &LspConfig) -> HashMap<RegistryType, PackageReso
         ),
     );
 
+    resolvers.insert(
+        RegistryType::SwiftPm,
+        PackageResolver::new(
+            Arc::new(swift_pm_parser_from(&registries.swift_pm)),
+            Arc::new(SwiftPmVersionMatcher),
+            Arc::new(swift_pm_registry_from(&registries.swift_pm)),
+        ),
+    );
+
     resolvers
 }
 
@@ -243,6 +254,59 @@ fn github_registry_from(cfg: &RegistryConfig) -> GitHubRegistry {
     }
 }
 
+/// Build a `GitHubRegistry` configured to report `RegistryType::SwiftPm`.
+/// Swift Package Manager dependencies live on GitHub, so we reuse the GitHub
+/// Releases API backend but tag the resulting registry with the SwiftPm type
+/// so cache lookups and resolver routing stay separated from GitHub Actions.
+fn swift_pm_registry_from(cfg: &RegistryConfig) -> GitHubRegistry {
+    let registry = if let Some(url) = cfg.url.as_deref() {
+        GitHubRegistry::new(url)
+    } else {
+        GitHubRegistry::default()
+    };
+    registry.with_registry_type(RegistryType::SwiftPm)
+}
+
+/// Build a `PackageSwiftParser` whose allow-list includes `github.com` plus
+/// the host extracted from `cfg.url` (if any). This is what makes private
+/// GitHub Enterprise mirrors work: setting `registries.swiftPm.url =
+/// "https://github.example.com/api/v3"` causes the parser to also accept
+/// dependency URLs hosted at `github.example.com`.
+fn swift_pm_parser_from(cfg: &RegistryConfig) -> PackageSwiftParser {
+    let extra_host = cfg.url.as_deref().and_then(host_from_url);
+    match extra_host {
+        Some(host) => PackageSwiftParser::with_allowed_hosts([host]),
+        None => PackageSwiftParser::new(),
+    }
+}
+
+/// Extract the host portion of an HTTP(S) URL (no port handling required —
+/// the hosts we compare against are bare hostnames like `github.example.com`).
+fn host_from_url(url: &str) -> Option<String> {
+    let after_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host_with_port = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|s| !s.is_empty())?;
+    // Strip credentials (`user:pass@host`) and port (`host:443`) — we only
+    // care about the bare host for parser host matching.
+    let after_userinfo = host_with_port
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(host_with_port);
+    let host = after_userinfo
+        .split_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(after_userinfo);
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +325,7 @@ mod tests {
             RegistryType::Jsr,
             RegistryType::PyPI,
             RegistryType::Docker,
+            RegistryType::SwiftPm,
         ] {
             assert!(
                 resolvers.contains_key(&registry_type),
@@ -268,6 +333,16 @@ mod tests {
                 registry_type
             );
         }
+    }
+
+    #[test]
+    fn swift_pm_resolver_reports_swift_pm_registry_type() {
+        let resolvers = create_resolvers(&LspConfig::default());
+        let registry = resolvers
+            .get(&RegistryType::SwiftPm)
+            .expect("SwiftPm resolver missing")
+            .registry();
+        assert_eq!(registry.registry_type(), RegistryType::SwiftPm);
     }
 
     #[tokio::test]
@@ -425,5 +500,74 @@ mod tests {
 
         let resolvers = create_resolvers(&config);
         assert!(resolvers.contains_key(&RegistryType::Docker));
+    }
+
+    #[tokio::test]
+    async fn swift_pm_resolver_routes_fetches_to_overridden_url() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/repos/team/internal-lib/releases")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"tag_name": "v1.2.0", "published_at": "2024-01-15T00:00:00Z"}]"#)
+            .create_async()
+            .await;
+
+        let mut config = LspConfig::default();
+        config.registries.swift_pm.url = Some(server.url());
+
+        let resolvers = create_resolvers(&config);
+        let registry = resolvers
+            .get(&RegistryType::SwiftPm)
+            .expect("SwiftPm resolver missing")
+            .registry();
+
+        let result = registry
+            .fetch_all_versions("team/internal-lib")
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(result.versions, vec!["v1.2.0"]);
+    }
+
+    #[test]
+    fn swift_pm_parser_accepts_host_extracted_from_configured_url() {
+        let mut config = LspConfig::default();
+        config.registries.swift_pm.url = Some("https://github.example.com/api/v3".to_string());
+
+        let resolvers = create_resolvers(&config);
+        let parser = resolvers
+            .get(&RegistryType::SwiftPm)
+            .expect("SwiftPm resolver missing")
+            .parser();
+
+        // Round-trip a private-host dependency through the parser to confirm
+        // the resolver builder wired the override host through.
+        let manifest = r#"import PackageDescription
+let package = Package(
+    dependencies: [
+        .package(url: "https://github.example.com/team/internal-lib.git", from: "1.0.0"),
+    ]
+)
+"#;
+        let packages = parser.parse(manifest).unwrap();
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "team/internal-lib");
+    }
+
+    #[rstest::rstest]
+    #[case("https://github.example.com", Some("github.example.com"))]
+    #[case("https://github.example.com/api/v3", Some("github.example.com"))]
+    #[case(
+        "https://user:token@github.example.com/api/v3",
+        Some("github.example.com")
+    )]
+    #[case("https://github.example.com:8443/api/v3", Some("github.example.com"))]
+    #[case("http://github.example.com", Some("github.example.com"))]
+    #[case("not-a-url", None)]
+    #[case("ftp://example.com", None)]
+    fn host_from_url_extracts_bare_host(#[case] url: &str, #[case] expected: Option<&str>) {
+        assert_eq!(host_from_url(url).as_deref(), expected);
     }
 }
