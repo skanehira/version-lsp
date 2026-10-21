@@ -1,0 +1,68 @@
+{
+  "name": "version-lsp",
+  "displayName": "Version LSP",
+  "description": "Language Server for package version management",
+  "version": "0.1.0",
+  "publisher": "skanehira",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/skanehira/version-lsp"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:toml",
+    "onLanguage:json",
+    "onLanguage:jsonc",
+    "onLanguage:go.mod",
+    "onLanguage:yaml",
+    "onLanguage:python"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "Version LSP",
+      "properties": {
+        "versionLsp.serverPath": {
+          "type": "string",
+          "default": "version-lsp",
+          "description": "Path to the version-lsp executable"
+        },
+        "versionLsp.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.9",
+    "@types/vscode": "^1.75",
+    "@typescript-eslint/eslint-plugin": "^8.53.0",
+    "@typescript-eslint/parser": "^8.53.0",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}
