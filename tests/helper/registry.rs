@@ -13,6 +13,7 @@ use version_lsp::parser::deno_json::DenoJsonParser;
 use version_lsp::parser::github_actions::GitHubActionsParser;
 use version_lsp::parser::go_mod::GoModParser;
 use version_lsp::parser::package_json::PackageJsonParser;
+use version_lsp::parser::package_swift::PackageSwiftParser;
 use version_lsp::parser::pnpm_workspace::PnpmWorkspaceParser;
 use version_lsp::parser::pyproject_toml::PyprojectTomlParser;
 use version_lsp::parser::types::RegistryType;
@@ -22,6 +23,7 @@ use version_lsp::version::error::RegistryError;
 use version_lsp::version::matchers::{
     CratesVersionMatcher, DockerVersionMatcher, GitHubActionsMatcher, GoVersionMatcher,
     JsrVersionMatcher, NpmVersionMatcher, PnpmCatalogMatcher, PypiVersionMatcher,
+    SwiftPmVersionMatcher,
 };
 use version_lsp::version::registries::github::GitHubRegistry;
 use version_lsp::version::registry::Registry;
@@ -116,6 +118,11 @@ pub fn create_test_resolver(
             Arc::new(DockerVersionMatcher),
             Arc::new(mock_registry),
         ),
+        RegistryType::SwiftPm => PackageResolver::new(
+            Arc::new(PackageSwiftParser::new()),
+            Arc::new(SwiftPmVersionMatcher),
+            Arc::new(mock_registry),
+        ),
     }
 }
 
@@ -139,4 +146,24 @@ pub fn create_test_cache(
     }
 
     (temp_dir, Arc::new(cache))
+}
+
+/// Create a SwiftPm test resolver whose parser accepts the supplied private
+/// hosts in addition to `github.com`. Mirrors the production wiring in
+/// `lsp::resolver::create_resolvers` for SwiftPm + a non-default
+/// `registries.swiftPm.url`.
+#[allow(dead_code)]
+pub fn create_swift_pm_resolver_with_hosts<I, S>(
+    mock_registry: MockRegistry,
+    extra_hosts: I,
+) -> PackageResolver
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    PackageResolver::new(
+        Arc::new(PackageSwiftParser::with_allowed_hosts(extra_hosts)),
+        Arc::new(SwiftPmVersionMatcher),
+        Arc::new(mock_registry),
+    )
 }
