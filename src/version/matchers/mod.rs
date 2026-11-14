@@ -8,6 +8,7 @@ pub mod jsr;
 pub mod npm;
 pub mod pnpm;
 pub mod pypi;
+pub mod swift_pm;
 
 pub use crates::CratesVersionMatcher;
 pub use docker::DockerVersionMatcher;
@@ -17,3 +18,4 @@ pub use jsr::JsrVersionMatcher;
 pub use npm::NpmVersionMatcher;
 pub use pnpm::PnpmCatalogMatcher;
 pub use pypi::PypiVersionMatcher;
+pub use swift_pm::SwiftPmVersionMatcher;

@@ -19,6 +19,8 @@ pub enum RegistryType {
     PyPI,
     /// Docker (compose.yaml)
     Docker,
+    /// Swift Package Manager (Package.swift)
+    SwiftPm,
 }
 
 impl RegistryType {
@@ -33,6 +35,7 @@ impl RegistryType {
             RegistryType::Jsr => "jsr",
             RegistryType::PyPI => "pypi",
             RegistryType::Docker => "docker",
+            RegistryType::SwiftPm => "swift_pm",
         }
     }
 }
@@ -50,6 +53,7 @@ impl std::str::FromStr for RegistryType {
             "jsr" => Ok(RegistryType::Jsr),
             "pypi" => Ok(RegistryType::PyPI),
             "docker" => Ok(RegistryType::Docker),
+            "swift_pm" => Ok(RegistryType::SwiftPm),
             _ => Err(()),
         }
     }
@@ -73,6 +77,8 @@ pub fn detect_parser_type(uri: &str) -> Option<RegistryType> {
         Some(RegistryType::PyPI)
     } else if is_compose_file(uri) {
         Some(RegistryType::Docker)
+    } else if uri.ends_with("/Package.swift") {
+        Some(RegistryType::SwiftPm)
     } else {
         None
     }
@@ -222,6 +228,9 @@ mod tests {
     #[case("/path/to/docker-compose.yaml", Some(RegistryType::Docker))]
     #[case("/path/to/docker-compose.yml", Some(RegistryType::Docker))]
     #[case("file:///home/user/compose.yaml", Some(RegistryType::Docker))]
+    #[case("/path/to/Package.swift", Some(RegistryType::SwiftPm))]
+    #[case("/project/Package.swift", Some(RegistryType::SwiftPm))]
+    #[case("file:///home/user/Package.swift", Some(RegistryType::SwiftPm))]
     #[case("workflow.yml", None)]
     #[case("random.txt", None)]
     fn detect_parser_type_returns_expected(

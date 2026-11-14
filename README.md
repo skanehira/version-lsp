@@ -38,6 +38,7 @@ A Language Server Protocol (LSP) implementation that provides version checking d
 | `.github/workflows/*.yaml`/`.github/actions/*/*.yaml` | GitHub Releases |
 | `deno.json` / `deno.jsonc`                            | JSR             |
 | `compose.yaml` / `docker-compose.yaml`                | Docker Hub / ghcr.io |
+| `Package.swift`                                       | GitHub Releases (Swift Package Manager) |
 
 ### pnpm Catalogs
 
@@ -74,6 +75,31 @@ services:
 - Suffix-aware comparison: `nginx:1.25-alpine` suggests `1.27-alpine` when available
 - Skips `latest` tags, digest references (`@sha256:...`), and variable expansions (`${VAR}`)
 - Unsupported registries (e.g., `mcr.microsoft.com`) are ignored
+
+### Swift Package Manager
+
+Supports `Package.swift` dependencies hosted on GitHub. Versions are checked against the GitHub Releases API:
+
+```swift
+// swift-tools-version:5.9
+import PackageDescription
+
+let package = Package(
+    name: "MyApp",
+    dependencies: [
+        .package(url: "https://github.com/vapor/vapor.git", from: "4.92.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.50.0"),
+        .package(url: "https://github.com/apple/swift-log.git", .upToNextMajor(from: "1.5.0")),
+        .package(url: "https://github.com/apple/swift-metrics.git", .upToNextMinor(from: "2.4.0")),
+        .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "5.0.0"),
+        .package(url: "https://github.com/apple/swift-asn1.git", "1.0.0" ... "2.0.0"),
+    ]
+)
+```
+
+- Supported constraints: `from:`, `exact:`, `.upToNextMajor(from:)`, `.upToNextMinor(from:)`, half-open ranges (`A ..< B`), closed ranges (`A ... B`)
+- Branch and revision pins (`branch:`, `revision:`) are skipped — they have no version to compare
+- By default only `github.com` URLs are checked. Set `registries.swiftPm.url` to a private GitHub Enterprise API endpoint (e.g. `https://github.example.com/api/v3`) and the parser will also accept dependencies hosted at that URL's host. URL-embedded credentials (`https://user:token@host/`) are redacted from logs.
 
 ## Installation
 
@@ -157,6 +183,7 @@ lspconfig.version_lsp.setup({
         pnpmCatalog = { enabled = true },
         jsr = { enabled = true },
         docker = { enabled = true },
+        swiftPm = { enabled = true },
 
         -- Optional URL overrides (e.g. for private mirrors). When a
         -- registry's `url` is unset the default public registry is used.
@@ -169,6 +196,7 @@ lspconfig.version_lsp.setup({
         -- github = { url = "https://github.example.com/api/v3" },
         -- jsr = { url = "https://jsr.internal.example.com" },
         -- pnpmCatalog = { url = "https://npm.internal.example.com" },
+        -- swiftPm = { url = "https://github.example.com/api/v3" },
         -- docker = {
         --   dockerHubRegistryUrl = "https://hub.internal.example.com",
         --   dockerHubAuthUrl = "https://hub.internal.example.com/token",
@@ -206,6 +234,8 @@ lspconfig.version_lsp.setup({
 | `registries.docker.dockerHubAuthUrl`     | string | unset | Override Docker Hub auth URL                              |
 | `registries.docker.ghcrRegistryUrl`      | string | unset | Override ghcr.io registry URL                             |
 | `registries.docker.ghcrAuthUrl`          | string | unset | Override ghcr.io auth URL                                 |
+| `registries.swiftPm.enabled`     | boolean | `true`     | Enable Swift Package Manager checks                        |
+| `registries.swiftPm.url`         | string  | unset      | Override GitHub API base URL for SPM. Setting this also adds the URL's host to the parser's allow-list so dependencies hosted there are checked |
 | `ignorePrerelease`               | boolean | `true`     | Ignore prerelease versions (alpha, beta, rc, etc.)         |
 
 URL overrides apply on the next configuration push from your editor (delivered

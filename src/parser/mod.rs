@@ -8,6 +8,7 @@
 //! - pnpm_workspace.rs: pnpm-workspace.yaml catalog parser
 //! - deno_json.rs: deno.json parser
 //! - pyproject_toml.rs: pyproject.toml parser
+//! - package_swift.rs: Package.swift (Swift Package Manager) parser
 
 pub mod cargo_toml;
 pub mod compose;
@@ -15,6 +16,7 @@ pub mod deno_json;
 pub mod github_actions;
 pub mod go_mod;
 pub mod package_json;
+pub mod package_swift;
 pub mod pnpm_workspace;
 pub mod pyproject_toml;
 pub mod traits;
@@ -26,6 +28,7 @@ pub use deno_json::DenoJsonParser;
 pub use github_actions::GitHubActionsParser;
 pub use go_mod::GoModParser;
 pub use package_json::PackageJsonParser;
+pub use package_swift::PackageSwiftParser;
 pub use pnpm_workspace::PnpmWorkspaceParser;
 pub use pyproject_toml::PyprojectTomlParser;
 pub use traits::{ParseError, Parser};
