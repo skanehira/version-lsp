@@ -36,7 +36,14 @@ jobs:
           (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor')
         run: |
-          gh pr merge --auto -s "$PR_URL"
+          # main は未保護のため auto-merge を有効化できない。
+          # ブランチ保護がある場合のみ auto-merge を有効化し、無い場合は
+          # 毎朝の dependabot マージスクリプトに任せる。
+          if gh api "repos/${GITHUB_REPOSITORY}/branches/${GITHUB_BASE_REF}/protection" >/dev/null 2>&1; then
+            gh pr merge --auto -s "$PR_URL"
+          else
+            echo "Branch ${GITHUB_BASE_REF} is not protected; skipping auto-merge (daily merge script handles this PR)."
+          fi
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_TITLE: ${{ github.event.pull_request.title }}
