@@ -46,10 +46,14 @@ pub trait TagShaFetcher: Send + Sync {
 pub struct GitHubRegistry {
     client: reqwest::Client,
     base_url: String,
+    registry_type: RegistryType,
 }
 
 impl GitHubRegistry {
-    /// Creates a new GitHubRegistry with a custom base URL
+    /// Creates a new GitHubRegistry with a custom base URL. The reported
+    /// `registry_type()` defaults to [`RegistryType::GitHubActions`]; use
+    /// [`Self::with_registry_type`] to override it for other consumers
+    /// (e.g. Swift Package Manager).
     pub fn new(base_url: &str) -> Self {
         Self {
             client: reqwest::Client::builder()
@@ -57,7 +61,16 @@ impl GitHubRegistry {
                 .build()
                 .expect("Failed to create HTTP client"),
             base_url: base_url.to_string(),
+            registry_type: RegistryType::GitHubActions,
         }
+    }
+
+    /// Override the [`RegistryType`] reported by this registry instance.
+    /// The HTTP behavior is identical regardless of registry type — this
+    /// only affects the value returned by [`Registry::registry_type`].
+    pub fn with_registry_type(mut self, registry_type: RegistryType) -> Self {
+        self.registry_type = registry_type;
+        self
     }
 }
 
@@ -73,7 +86,7 @@ impl Default for GitHubRegistry {
 #[async_trait::async_trait]
 impl Registry for GitHubRegistry {
     fn registry_type(&self) -> RegistryType {
-        RegistryType::GitHubActions
+        self.registry_type
     }
 
     async fn fetch_all_versions(
@@ -201,6 +214,19 @@ impl TagShaFetcher for GitHubRegistry {
 mod tests {
     use super::*;
     use mockito::Server;
+
+    #[test]
+    fn registry_type_defaults_to_github_actions() {
+        let registry = GitHubRegistry::new("https://api.github.com");
+        assert_eq!(registry.registry_type(), RegistryType::GitHubActions);
+    }
+
+    #[test]
+    fn with_registry_type_overrides_reported_type() {
+        let registry =
+            GitHubRegistry::new("https://api.github.com").with_registry_type(RegistryType::SwiftPm);
+        assert_eq!(registry.registry_type(), RegistryType::SwiftPm);
+    }
 
     #[tokio::test]
     async fn fetch_all_versions_returns_releases_sorted_by_published_at() {

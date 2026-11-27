@@ -65,6 +65,8 @@ pub struct RegistriesConfig {
     pub jsr: RegistryConfig,
     pub pypi: RegistryConfig,
     pub docker: DockerRegistryConfig,
+    #[serde(rename = "swiftPm")]
+    pub swift_pm: RegistryConfig,
 }
 
 /// Individual registry configuration with optional URL override
@@ -270,6 +272,7 @@ mod tests {
                         url: None
                     },
                     docker: DockerRegistryConfig::default(),
+                    swift_pm: RegistryConfig::default(),
                 },
                 ignore_prerelease: true,
             }
@@ -298,6 +301,27 @@ mod tests {
             RegistryConfig {
                 enabled: false,
                 url: Some("https://npm.internal/".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn swift_pm_config_parses_camel_case_key() {
+        let result = serde_json::from_value::<LspConfig>(json!({
+            "registries": {
+                "swiftPm": {
+                    "enabled": false,
+                    "url": "https://internal.github.example.com"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            result.registries.swift_pm,
+            RegistryConfig {
+                enabled: false,
+                url: Some("https://internal.github.example.com".to_string()),
             }
         );
     }
