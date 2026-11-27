@@ -4,6 +4,9 @@ use clap::{Parser, Subcommand};
 #[command(name = "version-lsp")]
 #[command(version, about = "Language Server for package version management")]
 struct Cli {
+    #[arg(long)]
+    stdio: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
